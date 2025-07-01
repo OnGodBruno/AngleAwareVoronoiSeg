@@ -7,7 +7,7 @@ Python code for curvature-aware 3D mesh segmentation using `trimesh`, `networkx`
 ✅ Segments 3D models based on spatial distance and curvature  
 ✅ Adjustable penalty for curvature differences  
 ✅ Outputs segmented `.obj` files  
-✅ Easy to configure number of regions  
+✅ Configurable number of Segments
 
 ## Installation
 
