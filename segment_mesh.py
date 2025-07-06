@@ -6,6 +6,7 @@ import numpy as np
 import networkx as nx
 import random
 import os
+import argparse
 
 
 def load_and_clean_mesh(mesh_path):
@@ -66,6 +67,8 @@ def segment_mesh(mesh, G, seed_faces):
     Perform geodesic propagation to segment the mesh.
     """
     face_labels = np.full(len(mesh.faces), -1)
+
+    # stores the current seed and distance for each face: {f_idx: (seed, dist)}
     distance_map = {}
 
     for seed_id, seed in enumerate(seed_faces):
@@ -95,18 +98,29 @@ def export_segments(mesh, face_labels, n_seeds, output_dir):
 
 
 def main():
-    print("Segmentation Started");
+    parser = argparse.ArgumentParser(description='3D Mesh Segmentation')
+    parser.add_argument('--n_seeds', type=int, default=10, help='Number of segments')
+    parser.add_argument('--curvature_penalty_strength', type=float, default=25.0, help='Angle punishment strength')
+    parser.add_argument('--seed_faces', type=int, nargs='*', default=None, help='Manual seed face indices (optional)')
+
+    args = parser.parse_args()
+
+    print("Segmentation Started")
     mesh_path = r"input\example.obj"
     output_dir = r"output"
-    n_seeds = 10 #Amount of Segments
-    curvature_penalty_strength = 25.0 #Angle Punishment 
 
     mesh = load_and_clean_mesh(mesh_path)
-    G = build_adjacency_graph(mesh, curvature_penalty_strength)
-    seed_faces = select_seeds(mesh.triangles_center, n_seeds)
-    print(f"Using seed face indices: {seed_faces}") #Should be implemented to also be chosen manually
+    G = build_adjacency_graph(mesh, args.curvature_penalty_strength)
+
+    if args.seed_faces is not None:
+        seed_faces = args.seed_faces
+        args.n_seeds = len(seed_faces)
+    else:
+        seed_faces = select_seeds(mesh.triangles_center, args.n_seeds)
+
+    print(f"Using seed face indices: {seed_faces}")
     face_labels = segment_mesh(mesh, G, seed_faces)
-    export_segments(mesh, face_labels, n_seeds, output_dir)
+    export_segments(mesh, face_labels, args.n_seeds, output_dir)
     print("Segmentation complete.")
 
 
