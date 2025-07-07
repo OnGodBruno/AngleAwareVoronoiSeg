@@ -26,7 +26,9 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     G = nx.Graph()
     face_centers = mesh.triangles_center
     face_normals = mesh.face_normals
-    avg_face_size = np.mean([np.linalg.norm(n) for n in face_normals])
+    edge_lengths = mesh.edges_unique_length
+
+    avg_edge_length = edge_lengths.mean()
 
     for f1, f2 in mesh.face_adjacency:
         p1, p2 = face_centers[f1], face_centers[f2]
@@ -39,11 +41,11 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
             continue  # Remove very steep edges
 
         curvature_penalty = np.exp(curvature_penalty_strength * normal_diff)
-        spatial_penalty = 1 + (spatial_dist / avg_face_size) ** 2
+        spatial_penalty = 1 + (spatial_dist / avg_edge_length) ** 2
         weight = spatial_penalty * curvature_penalty
 
         G.add_edge(f1, f2, weight=weight)
-
+    print("build_adjacency_graph finished")  # DEBUG
     return G
 
 
@@ -59,6 +61,8 @@ def select_seeds(face_centers, n_seeds):
         ]
         probs = np.array(dists) / np.sum(dists)
         seed_faces.append(np.random.choice(len(face_centers), p=probs))
+
+    print("select_seeds finished")
     return seed_faces
 
 
@@ -98,29 +102,45 @@ def export_segments(mesh, face_labels, n_seeds, output_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='3D Mesh Segmentation')
-    parser.add_argument('--n_seeds', type=int, default=10, help='Number of segments')
-    parser.add_argument('--curvature_penalty_strength', type=float, default=25.0, help='Angle punishment strength')
-    parser.add_argument('--seed_faces', type=int, nargs='*', default=None, help='Manual seed face indices (optional)')
+    parser = argparse.ArgumentParser(description="3D Mesh Segmentation")
+    parser.add_argument(
+        "--mesh_path",
+        type=str,
+        default=r"input\run\mesh.obj",
+        help="Path to mesh file (default: input\\run\\mesh.obj)",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="output",
+        help="Path to output directory (default: output)",
+    )
+    parser.add_argument("--n_seeds", type=int, default=10, help="Number of segments")
+    parser.add_argument(
+        "--curvature_penalty_strength",
+        type=float,
+        default=25.0,
+        help="Angle punishment strength",
+    )
+    parser.add_argument(
+        "--seed_faces",
+        type=int,
+        nargs="*",
+        help="Manual seed face indices (optional)",
+    )
 
     args = parser.parse_args()
-
     print("Segmentation Started")
-    mesh_path = r"input\example.obj"
-    output_dir = r"output"
 
-    mesh = load_and_clean_mesh(mesh_path)
+    mesh = load_and_clean_mesh(args.mesh_path)
     G = build_adjacency_graph(mesh, args.curvature_penalty_strength)
 
-    if args.seed_faces is not None:
-        seed_faces = args.seed_faces
-        args.n_seeds = len(seed_faces)
-    else:
-        seed_faces = select_seeds(mesh.triangles_center, args.n_seeds)
+    seed_faces = args.seed_faces or select_seeds(mesh.triangles_center, args.n_seeds)
+    n_seeds = len(seed_faces)
 
     print(f"Using seed face indices: {seed_faces}")
     face_labels = segment_mesh(mesh, G, seed_faces)
-    export_segments(mesh, face_labels, args.n_seeds, output_dir)
+    export_segments(mesh, face_labels, n_seeds, args.output_dir)
     print("Segmentation complete.")
 
 
