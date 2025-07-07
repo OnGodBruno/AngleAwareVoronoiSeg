@@ -58,7 +58,7 @@ def select_seeds(face_centers, n_seeds, G):
     valid_ids = np.fromiter(G.nodes(), dtype=int)
     valid_centers = face_centers[valid_ids]
 
-    seed_faces = [rng.integers(len(valid_ids))]
+    seed_faces = [rng.integers(0, len(valid_ids)-1)]
 
     d_min = np.linalg.norm(valid_centers - valid_centers[seed_faces[0]], axis=1)
 
