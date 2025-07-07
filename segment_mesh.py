@@ -49,21 +49,32 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     return G
 
 
-def select_seeds(face_centers, n_seeds):
+def select_seeds(face_centers, n_seeds, G):
     """
-    Select seed faces using farthest-point sampling.
+    Select seed faces using vectorized farthest-point sampling.
     """
-    seed_faces = [random.randint(0, len(face_centers) - 1)]
-    while len(seed_faces) < n_seeds:
-        dists = [
-            min(np.linalg.norm(face_centers[i] - face_centers[s]) for s in seed_faces)
-            for i in range(len(face_centers))
-        ]
-        probs = np.array(dists) / np.sum(dists)
-        seed_faces.append(np.random.choice(len(face_centers), p=probs))
+    rng = np.random.default_rng()
 
-    print("select_seeds finished")
+    valid_ids = np.fromiter(G.nodes(), dtype=int)
+    valid_centers = face_centers[valid_ids]
+
+    seed_faces = [rng.integers(len(valid_ids))]
+
+    d_min = np.linalg.norm(valid_centers - valid_centers[seed_faces[0]], axis=1)
+
+    for _ in range(1, n_seeds):
+        probs = d_min / d_min.sum()
+        new_seed_face = rng.choice(len(valid_ids), p=probs)
+        seed_faces.append(new_seed_face)
+
+        d_new = np.linalg.norm(valid_centers - valid_centers[new_seed_face], axis=1)
+        d_min = np.minimum(d_new, d_min)
+
+    seed_faces = valid_ids[seed_faces].tolist()
+    print("select_seeds_finished")  # DEBUG
     return seed_faces
+
+
 
 
 def segment_mesh(mesh, G, seed_faces):
@@ -106,8 +117,8 @@ def main():
     parser.add_argument(
         "--mesh_path",
         type=str,
-        default=r"input\run\mesh.obj",
-        help="Path to mesh file (default: input\\run\\mesh.obj)",
+        default=r"input\run\example.obj",
+        help="Path to mesh file (default: input\\run\\example.obj)",
     )
     parser.add_argument(
         "--output_dir",
@@ -135,7 +146,7 @@ def main():
     mesh = load_and_clean_mesh(args.mesh_path)
     G = build_adjacency_graph(mesh, args.curvature_penalty_strength)
 
-    seed_faces = args.seed_faces or select_seeds(mesh.triangles_center, args.n_seeds)
+    seed_faces = args.seed_faces or select_seeds(mesh.triangles_center, args.n_seeds, G)
     n_seeds = len(seed_faces)
 
     print(f"Using seed face indices: {seed_faces}")
