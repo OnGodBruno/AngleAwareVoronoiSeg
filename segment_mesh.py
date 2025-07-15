@@ -1,13 +1,17 @@
 #Author: Bruno Zoller
 #Institution: University of Stuttgart
-import networkx
+
 import trimesh
 import numpy as np
 import networkx as nx
 from scipy.sparse import csgraph
+import scipy.sparse as sparse
 import random
 import os
 import argparse
+
+
+import time # Debug
 
 
 def load_and_clean_mesh(mesh_path):
@@ -24,80 +28,96 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     """
     Build a face adjacency graph with curvature-aware edge weights.
     """
-    G = nx.Graph()
+
     face_centers = mesh.triangles_center
     face_normals = mesh.face_normals
     edge_lengths = mesh.edges_unique_length
+    adj = mesh.face_adjacency
 
     avg_edge_length = edge_lengths.mean()
 
-    for f1, f2 in mesh.face_adjacency:
-        p1, p2 = face_centers[f1], face_centers[f2]
-        n1, n2 = face_normals[f1], face_normals[f2]
+    # Vectorized calculations
+    p1 = face_centers[adj[:, 0]]
+    p2 = face_centers[adj[:, 1]]
+    n1 = face_normals[adj[:, 0]]
+    n2 = face_normals[adj[:, 1]]
 
-        spatial_dist = np.linalg.norm(p1 - p2)
-        normal_diff = np.arccos(np.clip(np.dot(n1, n2), -1.0, 1.0))
+    spatial_dist = np.linalg.norm(p1 - p2, axis=1)
+    angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
 
-        if normal_diff > max_normal_angle:
-            continue  # Remove very steep edges
+    # Filter edges based on angle threshold
+    mask = angle <= max_normal_angle
 
-        curvature_penalty = np.exp(curvature_penalty_strength * normal_diff)
-        spatial_penalty = 1 + (spatial_dist / avg_edge_length) ** 2
-        weight = spatial_penalty * curvature_penalty
+    curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])
+    spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
+    weights = spatial_penalty * curvature_penalty
 
-        G.add_edge(f1, f2, weight=weight)
-    print("build_adjacency_graph finished")  # DEBUG
-    return G
+    adj_valid = adj[mask]
 
+    active_faces = np.unique(adj_valid.flatten())
 
-def select_seeds(face_centers, n_seeds, graph_nodes):
+    face_coords = face_centers[active_faces]
+
+    row = np.searchsorted(active_faces, adj_valid[:, 0])
+    col = np.searchsorted(active_faces, adj_valid[:, 1])
+
+    all_row = np.concatenate([row, col])
+    all_col = np.concatenate([col, row])
+    all_weights = np.concatenate([weights, weights]).astype(np.float64)
+
+    sparse_matrix = sparse.csr_matrix(
+        (all_weights, (all_row, all_col)),
+        shape=(len(active_faces),) * 2, dtype=np.float64)
+
+    print(sparse_matrix.shape, sparse_matrix.nnz)  # DEBUG
+    print("Graph built")  # DEBUG
+    return sparse_matrix, face_coords
+
+def select_seeds(face_coords, n_seeds):
     """
     Select seed faces using farthest-point sampling.
     """
     rng = np.random.default_rng()
-    n_faces = face_centers.shape[0]
+    n_faces = face_coords.shape[0]
 
-    seed_faces_id = [rng.integers(n_faces)]
-    d_min = np.linalg.norm(face_centers - face_centers[seed_faces_id[0]], axis=1)
+    seed_idx = [rng.integers(n_faces)]
+    d_min = np.linalg.norm(face_coords - face_coords[seed_idx[0]], axis=1)
 
     for _ in range(1, n_seeds):
         probs = d_min / d_min.sum()
         new_seed = rng.choice(n_faces, p=probs)
-        seed_faces_id.append(new_seed)
+        seed_idx.append(new_seed)
 
-        d_new = np.linalg.norm(face_centers - face_centers[new_seed], axis=1)
+        d_new = np.linalg.norm(face_coords - face_coords[new_seed], axis=1)
         d_min = np.minimum(d_min, d_new)
 
-    seed_faces = graph_nodes[seed_faces_id]
-    print("select_seeds finished")  # DEBUG
-    return seed_faces
+    print("seeds selected")  # DEBUG
+    return np.array(seed_idx)
 
 
-def segment_mesh(G, seed_faces):
+def segment_mesh(sparse_matrix, seed_idx):
     """
     Perform geodesic propagation to segment the mesh.
     """
-    nodelist = np.asarray(list(G), dtype=int)
-    node2idx = {v: i for i, v in enumerate(nodelist)}
-    seed_idx = np.fromiter((node2idx[s] for s in seed_faces), int)
 
-    # CSR-Sparse-Matrix, necessary for csgraph.dijkstra()
-    A = nx.to_scipy_sparse_array(G, nodelist=nodelist,
-                                 weight="weight", dtype=np.float64)
+    t0 = time.perf_counter() # DEBUG
 
-    # Multi-source dijkstra on all seed nodes in G (seed_idx)
-    dist = csgraph.dijkstra(A, indices=seed_idx,
+    # Multi-source dijkstra on all seed nodes (seed_idx)
+    dist = csgraph.dijkstra(sparse_matrix, indices=seed_idx,
                             directed=False, return_predecessors=False)
+
+    print("Elapsed:", time.perf_counter() - t0) # DEBUG
 
     # Generate offsets for each seed so that the earliest seed wins on exact distance matches
     eps = np.linspace(0.0, 1e-9, len(seed_idx), endpoint=False)[:, None]
     winner = (dist + eps).argmin(axis=0)
 
-    face_labels = {nodelist[i]: seed_faces[winner[i]]
-                   for i in range(len(nodelist))
+    # Create face labels mapping matrix indices to seed indices
+    face_labels = {i: seed_idx[winner[i]]
+                   for i in range(sparse_matrix.shape[0])
                    if np.isfinite(dist[winner[i], i])}
 
-    print("segment_mesh finished")  # DEBUG
+    print("mesh segmented")  # DEBUG
     return face_labels
 
 
@@ -142,7 +162,7 @@ def main():
         help="Angle punishment strength",
     )
     parser.add_argument(
-        "--seed_faces",
+        "--seed_idx",
         type=int,
         nargs="*",
         help="Manual seed face indices (optional)",
@@ -152,19 +172,17 @@ def main():
     print("Segmentation Started")
 
     mesh = load_and_clean_mesh(args.mesh_path)
-    G = build_adjacency_graph(mesh, args.curvature_penalty_strength)
-    graph_nodes = np.array(list(G.nodes()), dtype=int)
-    face_centers_in_G = mesh.triangles_center[graph_nodes]
+    sparse_matrix, face_coords = build_adjacency_graph(mesh, args.curvature_penalty_strength)
 
-    if args.seed_faces is None:
-        seed_faces = select_seeds(face_centers_in_G, args.n_seeds, graph_nodes)
+    if args.seed_idx is None:
+        seed_idx = select_seeds(face_coords, args.n_seeds)
     else:
-        seed_faces = np.array(args.seed_faces, dtype=int)
+        seed_idx = np.array(args.seed_idx, dtype=int)
 
-    print(f"Using seed face indices: {seed_faces}")
-    face_labels = segment_mesh(G, seed_faces)
+    print(f"Using seed face indices: {seed_idx}")
+    face_labels = segment_mesh(sparse_matrix, seed_idx)
 
-    export_segments(mesh, face_labels, seed_faces, args.output_dir)
+    export_segments(mesh, face_labels, seed_idx, args.output_dir)
     print("Segmentation complete.")
 
 
