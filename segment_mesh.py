@@ -50,26 +50,28 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     return G
 
 
-def select_seeds(face_centers, n_seeds):
+def select_seeds(face_centers, n_seeds, graph_nodes):
     """
     Select seed faces using farthest-point sampling.
     """
     rng = np.random.default_rng()
     n_faces = face_centers.shape[0]
 
-    seed_faces = [rng.integers(n_faces)]
-    d_min = np.linalg.norm(face_centers - face_centers[seed_faces[0]], axis=1)
+    seed_faces_id = [rng.integers(n_faces)]
+    d_min = np.linalg.norm(face_centers - face_centers[seed_faces_id[0]], axis=1)
 
     for _ in range(1, n_seeds):
         probs = d_min / d_min.sum()
         new_seed = rng.choice(n_faces, p=probs)
-        seed_faces.append(new_seed)
+        seed_faces_id.append(new_seed)
 
         d_new = np.linalg.norm(face_centers - face_centers[new_seed], axis=1)
         d_min = np.minimum(d_min, d_new)
 
-    print("select_seeds finished")   # DEBUG
+    seed_faces = graph_nodes[seed_faces_id]
+    print("select_seeds finished")  # DEBUG
     return seed_faces
+
 
 def segment_mesh(G, seed_faces):
     """
@@ -155,8 +157,7 @@ def main():
     face_centers_in_G = mesh.triangles_center[graph_nodes]
 
     if args.seed_faces is None:
-        local_idx = select_seeds(face_centers_in_G, args.n_seeds)
-        seed_faces = graph_nodes[local_idx]
+        seed_faces = select_seeds(face_centers_in_G, args.n_seeds, graph_nodes)
     else:
         seed_faces = np.array(args.seed_faces, dtype=int)
 
