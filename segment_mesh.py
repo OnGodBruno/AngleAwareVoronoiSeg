@@ -3,7 +3,6 @@
 
 import trimesh
 import numpy as np
-import networkx as nx
 from scipy.sparse import csgraph
 import scipy.sparse as sparse
 import random
@@ -27,6 +26,14 @@ def load_and_clean_mesh(mesh_path):
 def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.radians(20)):
     """
     Build a face adjacency graph with curvature-aware edge weights.
+    Returns:
+         sparse_matrix : scipy.sparse.csr_matrix, shape (m, m)
+        Weighted adjacency matrix of the filtered face graph. m is the number of faces
+        that remain after filtering. Entry (i, j) contains the weight between face i and j,
+        combining spatial distance and curvature penalty.
+    face_coords : numpy.ndarray, shape (m, 3)
+        Array of 3D centroids corresponding to the faces in the graph. Row index i of
+        `sparse_matrix` maps directly to `face_coords[i]`.
     """
 
     face_centers = mesh.triangles_center
@@ -52,6 +59,7 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
     weights = spatial_penalty * curvature_penalty
 
+    # Filters the edges
     adj_valid = adj[mask]
 
     active_faces = np.unique(adj_valid.flatten())
@@ -60,7 +68,6 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
 
     row = np.searchsorted(active_faces, adj_valid[:, 0])
     col = np.searchsorted(active_faces, adj_valid[:, 1])
-
     all_row = np.concatenate([row, col])
     all_col = np.concatenate([col, row])
     all_weights = np.concatenate([weights, weights]).astype(np.float64)
@@ -69,13 +76,18 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
         (all_weights, (all_row, all_col)),
         shape=(len(active_faces),) * 2, dtype=np.float64)
 
-    print(sparse_matrix.shape, sparse_matrix.nnz)  # DEBUG
     print("Graph built")  # DEBUG
     return sparse_matrix, face_coords
 
 def select_seeds(face_coords, n_seeds):
     """
     Select seed faces using farthest-point sampling.
+    Args:
+        face_coords: (m×3) array of 3D coordinates for active faces
+        n_seeds: number of seeds to select
+
+    Returns:
+        seed_idx: array of matrix row indices [0, m-1]
     """
     rng = np.random.default_rng()
     n_faces = face_coords.shape[0]
@@ -97,7 +109,18 @@ def select_seeds(face_coords, n_seeds):
 
 def segment_mesh(sparse_matrix, seed_idx):
     """
-    Perform geodesic propagation to segment the mesh.
+    Segment a mesh by multi‑source geodesic propagation on its adjacency matrix.
+
+    Returns:
+         face_labels : dict
+        Mapping `{face_i: seed_j}` where both keys and values are row indices into
+        `sparse_matrix`. Each face_i is assigned the seed_j to which it has the
+        shortest geodesic (edge‑weight) distance. Faces unreachable from any seed
+        (distance = inf) are omitted.
+
+    Note:
+        Ties in distance are broken by adding a small epsilon offset to each seed’s
+      distance array, favoring seeds with lower index in `seed_idx`.
     """
 
     t0 = time.perf_counter() # DEBUG
