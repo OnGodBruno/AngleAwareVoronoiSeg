@@ -78,6 +78,25 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     print("Graph built")  # DEBUG
     return sparse_matrix, face_coords, active_faces
 
+def pick_first_seed(face_coords,  pool_size=32):
+    """
+    Picks a pool of faces at random, selects the one with the greatest average distance from the pool.
+
+    Args:
+        face_coords: numpy.ndarray, shape (m, 3)
+        pool_size: int, number of faces in the pool
+    """
+    rng = np.random.default_rng()
+    n_faces = face_coords.shape[0]
+
+    pool = rng.choice(n_faces, size=pool_size, replace=False)
+    sub = face_coords[pool]
+    dist = np.linalg.norm(sub[:, None] - sub[None], axis=2)
+
+    return pool[np.argmax(dist.sum(axis=1))]
+
+
+
 def select_seeds(face_coords, n_seeds):
     """
     Select seed faces using farthest-point sampling.
@@ -91,7 +110,7 @@ def select_seeds(face_coords, n_seeds):
     rng = np.random.default_rng()
     n_faces = face_coords.shape[0]
 
-    seed_idx = [rng.integers(n_faces)]
+    seed_idx = [pick_first_seed(face_coords)]
     d_min = np.linalg.norm(face_coords - face_coords[seed_idx[0]], axis=1)
 
     for _ in range(1, n_seeds):
@@ -147,7 +166,7 @@ def export_segments(mesh, face_labels, seed_idx, active_faces, output_dir):
     segments = [[] for _ in range(len(seed_idx))]
 
     for row_idx, seed_row in face_labels.items():
-        seg_id  = row_to_segment[seed_row]
+        seg_id = row_to_segment[seed_row]
         face_id = active_faces[row_idx]
         segments[seg_id].append(face_id)
 
