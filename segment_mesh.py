@@ -1,5 +1,4 @@
-#Author: Bruno Zoller
-#Institution: University of Stuttgart
+
 
 import trimesh
 import numpy as np
@@ -8,7 +7,7 @@ import scipy.sparse as sparse
 import os
 import argparse
 
-import time  # Debug
+import time # Debug
 
 
 def load_and_clean_mesh(mesh_path):
@@ -25,12 +24,11 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     """
     Build a face adjacency graph with curvature-aware edge weights.
     Returns:
-         sparse_matrix : scipy.sparse.csr_matrix, shape (n, n)
-        Weighted adjacency matrix over all mesh faces. Entry (i, j) is the edge
-        weight between adjacent faces i and j, combining spatial distance and a
-        curvature‑based penalty. Faces whose normal angle exceeds `max_normal_angle`
-        get a very large penalty, so Dijkstra will almost never traverse them.
-    face_coords : numpy.ndarray, shape (n, 3)
+         sparse_matrix : scipy.sparse.csr_matrix, shape (m, m)
+        Weighted adjacency matrix of the filtered face graph. m is the number of faces
+        that remain after filtering. Entry (i, j) contains the weight between face i and j,
+        combining spatial distance and curvature penalty.
+    face_coords : numpy.ndarray, shape (m, 3)
         Array of 3D centroids corresponding to the faces in the graph. Row index i of
         `sparse_matrix` maps directly to `face_coords[i]`.
     """
@@ -51,30 +49,22 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     spatial_dist = np.linalg.norm(p1 - p2, axis=1)
     angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
 
-    log_cap = 700.0  # to avoid float64-Overflow (exp(700) ~ 1e304 < max float)
+    # Filter edges based on angle threshold
+    mask = angle <= max_normal_angle
 
-    # compute log-weights: steep angles get extra log(1e6) penalty; does it in log-space to avoid overflow
-    log_base_penalty = curvature_penalty_strength * np.minimum(angle, max_normal_angle)
-    log_curvature_penalty = np.where(angle >= max_normal_angle,
-                                     log_base_penalty + np.log(1e6),
-                                     log_base_penalty)
+    curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])
+    spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
+    weights = spatial_penalty * curvature_penalty
 
-    log_spatial_penalty = np.log1p((spatial_dist / avg_edge_length) ** 2)
+    # Filters the edges
+    adj_valid = adj[mask]
 
-    log_weights = np.minimum(log_curvature_penalty + log_spatial_penalty, log_cap)
-    weights = np.exp(log_weights).astype(np.float64)
-
-    # Rescaling to prevent big numbers
-    mean_w = weights.mean()
-    if mean_w > 0:
-        weights /= mean_w
-
-    active_faces = np.unique(adj.flatten())
+    active_faces = np.unique(adj_valid.flatten())
 
     face_coords = face_centers[active_faces]
 
-    row = np.searchsorted(active_faces, adj[:, 0])
-    col = np.searchsorted(active_faces, adj[:, 1])
+    row = np.searchsorted(active_faces, adj_valid[:, 0])
+    col = np.searchsorted(active_faces, adj_valid[:, 1])
     all_row = np.concatenate([row, col])
     all_col = np.concatenate([col, row])
     all_weights = np.concatenate([weights, weights]).astype(np.float64)
@@ -86,8 +76,7 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     print("Graph built")  # DEBUG
     return sparse_matrix, face_coords, active_faces
 
-
-def pick_first_seed(face_coords, pool_size=32):
+def pick_first_seed(face_coords,  pool_size=32):
     """
     Picks a pool of faces at random, selects the one with the greatest average distance from the pool.
 
@@ -178,7 +167,7 @@ def export_segments(mesh, face_labels, seed_idx, active_faces, output_dir):
 
     for i, face_ids in enumerate(segments):
         if face_ids:
-            mesh.submesh([face_ids], append=True) \
+            mesh.submesh([face_ids], append=True)\
                 .export(os.path.join(output_dir, f"segment_{i}.obj"))
 
 
@@ -217,8 +206,7 @@ def main():
     print("Segmentation Started")
 
     mesh = load_and_clean_mesh(args.mesh_path)
-    print("Faces:", len(mesh.faces))
-
+    print("Faces:", len(mesh.faces))  # DEBUG
     sparse_matrix, face_coords, active_faces = build_adjacency_graph(mesh, args.curvature_penalty_strength)
 
     if args.seed_idx is None:
@@ -232,8 +220,7 @@ def main():
     export_segments(mesh, face_labels, seed_idx, active_faces, args.output_dir)
     print("Segmentation complete.")
 
-    print("Elapsed:", time.perf_counter() - t0)  # DEBUG
-
+    print("Elapsed:", time.perf_counter() - t0) # DEBUG
 
 if __name__ == "__main__":
     main()
