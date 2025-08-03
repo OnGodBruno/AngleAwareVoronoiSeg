@@ -76,7 +76,7 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
     print("Graph built")  # DEBUG
     return sparse_matrix, face_coords, active_faces
 
-def pick_first_seed(face_coords,  pool_size=32):
+def pick_first_seed(face_coords,  pool_size=64):
     """
     Picks a pool of faces at random, selects the one with the greatest average distance from the pool.
 
