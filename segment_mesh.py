@@ -84,7 +84,7 @@ def pick_first_seed(face_coords,  pool_size=32):
         face_coords: numpy.ndarray, shape (m, 3)
         pool_size: int, number of faces in the pool
     """
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(42)
     n_faces = face_coords.shape[0]
 
     pool = rng.choice(n_faces, size=pool_size, replace=False)
@@ -104,7 +104,7 @@ def select_seeds(face_coords, n_seeds):
     Returns:
         seed_idx: array of matrix row indices [0, m-1]
     """
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(42)
     n_faces = face_coords.shape[0]
 
     seed_idx = [pick_first_seed(face_coords)]
