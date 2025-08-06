@@ -133,7 +133,7 @@ def compute_user_seed_affinity(adj, user_seeds, face_centers):
     
     return affinities
 
-def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.radians(20), user_seeds=None, enhanced_mode=False):
+def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.radians(60), user_seeds=None, enhanced_mode=False):
     """
     Build a face adjacency graph with curvature-aware edge weights.
     
@@ -284,8 +284,14 @@ def segment_mesh(sparse_matrix, seed_idx):
     """
 
     # Multi-source dijkstra on all seed nodes (seed_idx)
+    print(f"Running dijkstra from {len(seed_idx)} seeds: {seed_idx}")
     dist = csgraph.dijkstra(sparse_matrix, indices=seed_idx,
                             directed=False, return_predecessors=False)
+    
+    # Check for any infinite distances that shouldn't be there
+    inf_count = np.sum(~np.isfinite(dist), axis=None)
+    total_entries = dist.size
+    print(f"Distance matrix: {inf_count}/{total_entries} infinite entries ({100*inf_count/total_entries:.2f}%)")
 
     # Generate offsets for each seed so that the earliest seed wins on exact distance matches
     eps = np.linspace(0.0, 1e-9, len(seed_idx), endpoint=False)[:, None]
