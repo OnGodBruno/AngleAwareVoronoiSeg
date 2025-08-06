@@ -1,3 +1,6 @@
 trimesh
 networkx
 numpy
+flask
+flask-cors
+scipy

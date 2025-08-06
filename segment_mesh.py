@@ -20,9 +20,130 @@ def load_and_clean_mesh(mesh_path):
     return mesh
 
 
-def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.radians(20)):
+def compute_enhanced_distance_metrics(mesh, adj, user_seeds=None):
+    """
+    Compute enhanced distance metrics for user-seeded segmentation.
+    
+    Args:
+        mesh: trimesh object
+        adj: face adjacency pairs
+        user_seeds: list of user-selected face indices (optional)
+    
+    Returns:
+        dict with various distance components
+    """
+    face_centers = mesh.triangles_center
+    face_normals = mesh.face_normals
+    face_areas = mesh.area_faces
+    edge_lengths = mesh.edges_unique_length
+    
+    avg_edge_length = np.mean(edge_lengths)
+    avg_face_area = np.mean(face_areas)
+    
+    # Vectorized calculations
+    p1 = face_centers[adj[:, 0]]
+    p2 = face_centers[adj[:, 1]]
+    n1 = face_normals[adj[:, 0]]
+    n2 = face_normals[adj[:, 1]]
+    a1 = face_areas[adj[:, 0]]
+    a2 = face_areas[adj[:, 1]]
+    
+    # Basic metrics
+    spatial_dist = np.linalg.norm(p1 - p2, axis=1)
+    normal_angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
+    
+    # Enhanced metrics for user-seeded segmentation
+    area_ratio = np.abs(a1 - a2) / (a1 + a2 + 1e-8)  # Area similarity
+    
+    # Curvature-based features
+    shape_index_1 = compute_shape_index(mesh, adj[:, 0])
+    shape_index_2 = compute_shape_index(mesh, adj[:, 1])
+    shape_similarity = np.abs(shape_index_1 - shape_index_2)
+    
+    # User seed affinity (if user seeds provided)
+    seed_affinity = np.ones_like(spatial_dist)
+    if user_seeds is not None and len(user_seeds) > 0:
+        seed_affinity = compute_user_seed_affinity(adj, user_seeds, face_centers)
+    
+    return {
+        'spatial_dist': spatial_dist,
+        'normal_angle': normal_angle,
+        'area_ratio': area_ratio,
+        'shape_similarity': shape_similarity,
+        'seed_affinity': seed_affinity,
+        'avg_edge_length': avg_edge_length
+    }
+
+def compute_shape_index(mesh, face_indices):
+    """
+    Compute shape index for faces (simplified, fast version).
+    Uses face area as a proxy for curvature to avoid expensive neighbor searches.
+    """
+    try:
+        # Fast approximation: use normalized face area as shape indicator
+        face_areas = mesh.area_faces[face_indices]
+        avg_area = np.mean(mesh.area_faces)
+        
+        # Normalize to [0, 1] range where 0 = flat, 1 = highly curved
+        shape_proxy = np.abs(face_areas - avg_area) / (avg_area + 1e-8)
+        return np.clip(shape_proxy, 0, 2)  # Cap at 2 for extreme cases
+        
+    except Exception:
+        # Fallback to zeros if computation fails
+        return np.zeros(len(face_indices))
+
+def compute_user_seed_affinity(adj, user_seeds, face_centers):
+    """
+    Compute affinity based on proximity to user-selected seed regions.
+    Faces closer to seed regions get lower distance penalties.
+    Optimized vectorized version.
+    """
+    if not user_seeds:
+        return np.ones(len(adj))
+    
+    # Convert user seeds to face centers if needed
+    seed_positions = []
+    for seed in user_seeds:
+        if isinstance(seed, (list, tuple)) and len(seed) == 3:
+            # Seed is a 3D point, find closest face
+            distances = np.linalg.norm(face_centers - np.array(seed), axis=1)
+            closest_face = np.argmin(distances)
+            seed_positions.append(face_centers[closest_face])
+        else:
+            # Seed is already a face index
+            seed_positions.append(face_centers[seed])
+    
+    seed_positions = np.array(seed_positions)
+    
+    # Vectorized computation of edge midpoints
+    face1_pos = face_centers[adj[:, 0]]
+    face2_pos = face_centers[adj[:, 1]]
+    edge_midpoints = (face1_pos + face2_pos) / 2
+    
+    # Vectorized distance computation to all seeds
+    # Shape: (n_edges, n_seeds, 3)
+    edge_to_seeds = edge_midpoints[:, np.newaxis, :] - seed_positions[np.newaxis, :, :]
+    distances_to_seeds = np.linalg.norm(edge_to_seeds, axis=2)
+    
+    # Get minimum distance to any seed for each edge
+    min_distances = np.min(distances_to_seeds, axis=1)
+    
+    # Convert to affinity using exponential decay
+    affinities = np.exp(-min_distances * 2.0)  # Adjust decay rate as needed
+    
+    return affinities
+
+def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.radians(20), user_seeds=None, enhanced_mode=False):
     """
     Build a face adjacency graph with curvature-aware edge weights.
+    
+    Args:
+        mesh: trimesh object
+        curvature_penalty_strength: float, strength of curvature penalty
+        max_normal_angle: float, maximum angle between face normals to consider adjacent
+        user_seeds: list, user-selected seed points or face indices
+        enhanced_mode: bool, whether to use enhanced distance metrics
+    
     Returns:
          sparse_matrix : scipy.sparse.csr_matrix, shape (m, m)
         Weighted adjacency matrix of the filtered face graph. m is the number of faces
@@ -40,21 +161,45 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
 
     avg_edge_length = np.mean(edge_lengths)
 
-    # Vectorized calculations
-    p1 = face_centers[adj[:, 0]]
-    p2 = face_centers[adj[:, 1]]
-    n1 = face_normals[adj[:, 0]]
-    n2 = face_normals[adj[:, 1]]
+    if enhanced_mode:
+        # Use enhanced distance metrics for user-seeded segmentation
+        distance_metrics = compute_enhanced_distance_metrics(mesh, adj, user_seeds)
+        
+        spatial_dist = distance_metrics['spatial_dist']
+        angle = distance_metrics['normal_angle']
+        area_ratio = distance_metrics['area_ratio']
+        shape_similarity = distance_metrics['shape_similarity']
+        seed_affinity = distance_metrics['seed_affinity']
+        
+        # Filter edges based on angle threshold
+        mask = angle <= max_normal_angle
+        
+        # Enhanced weight calculation
+        curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])
+        spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
+        area_penalty = 1 + area_ratio[mask] * 0.5  # Penalize area differences
+        shape_penalty = 1 + shape_similarity[mask] * 0.3  # Penalize shape differences
+        user_penalty = 2.0 - seed_affinity[mask]  # Lower penalty near user seeds
+        
+        weights = spatial_penalty * curvature_penalty * area_penalty * shape_penalty * user_penalty
+        
+    else:
+        # Original calculation
+        # Vectorized calculations
+        p1 = face_centers[adj[:, 0]]
+        p2 = face_centers[adj[:, 1]]
+        n1 = face_normals[adj[:, 0]]
+        n2 = face_normals[adj[:, 1]]
 
-    spatial_dist = np.linalg.norm(p1 - p2, axis=1)
-    angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
+        spatial_dist = np.linalg.norm(p1 - p2, axis=1)
+        angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
 
-    # Filter edges based on angle threshold
-    mask = angle <= max_normal_angle
+        # Filter edges based on angle threshold
+        mask = angle <= max_normal_angle
 
-    curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])
-    spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
-    weights = spatial_penalty * curvature_penalty
+        curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])
+        spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
+        weights = spatial_penalty * curvature_penalty
 
     # Filters the edges
     adj_valid = adj[mask]
@@ -147,11 +292,53 @@ def segment_mesh(sparse_matrix, seed_idx):
     winner = (dist + eps).argmin(axis=0)
 
     # Create face labels mapping matrix indices to seed indices
-    face_labels = {i: seed_idx[winner[i]]
-                   for i in range(sparse_matrix.shape[0])
-                   if np.isfinite(dist[winner[i], i])}
+    face_labels = {}
+    reachable_faces = 0
+    unreachable_faces = 0
+    
+    for i in range(sparse_matrix.shape[0]):
+        if np.isfinite(dist[winner[i], i]):
+            face_labels[i] = seed_idx[winner[i]]
+            reachable_faces += 1
+        else:
+            unreachable_faces += 1
 
-    print("mesh segmented")  # DEBUG
+    print(f"Segmentation results: {reachable_faces} reachable faces, {unreachable_faces} unreachable faces")
+    
+    if unreachable_faces > 0:
+        print(f"Warning: {unreachable_faces} faces are unreachable from any seed.")
+        
+        # Attempt to handle unreachable faces by finding connected components
+        # Only do this if unreachable faces are significant (> 1% of total)
+        if unreachable_faces > sparse_matrix.shape[0] * 0.01:
+            print(f"Unreachable faces ({unreachable_faces}) > 1% of total. Computing connected components...")
+            n_components, component_labels = csgraph.connected_components(sparse_matrix, directed=False)
+            
+            if n_components > 1:
+                print(f"Mesh has {n_components} disconnected components. Assigning isolated components to nearest seeds...")
+                
+                # Find which components have seeds
+                seeded_components = set()
+                for seed in seed_idx:
+                    if seed < len(component_labels):
+                        seeded_components.add(component_labels[seed])
+                
+                # For each unseeded component, assign faces to the first available seed
+                assigned = 0
+                for i in range(sparse_matrix.shape[0]):
+                    if i not in face_labels:  # This face was unreachable
+                        component = component_labels[i]
+                        if component not in seeded_components:
+                            if len(seed_idx) > 0:
+                                face_labels[i] = seed_idx[0]  # Assign to first seed
+                                assigned += 1
+                
+                reachable_faces += assigned
+                unreachable_faces -= assigned
+                print(f"Assigned {assigned} faces from isolated components. New stats: {reachable_faces} reachable, {unreachable_faces} unreachable")
+        else:
+            print(f"Unreachable faces ({unreachable_faces}) < 1% of total. Skipping expensive component analysis.")
+    
     return face_labels
 
 

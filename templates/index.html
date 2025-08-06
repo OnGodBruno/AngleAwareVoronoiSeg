@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive 3D Mesh Segmentation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        #controls {
+            width: 300px;
+            padding: 20px;
+            background-color: #2a2a2a;
+            border-right: 1px solid #444;
+            overflow-y: auto;
+        }
+        
+        #viewer {
+            flex: 1;
+            position: relative;
+        }
+        
+        h1 {
+            color: #4CAF50;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input, button, select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #555;
+            background-color: #333;
+            color: white;
+            border-radius: 4px;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        .seed-list {
+            background-color: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        
+        .seed-item {
+            padding: 5px;
+            border-bottom: 1px solid #444;
+        }
+        
+        .seed-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        
+        .status.success {
+            background-color: #2d5a2d;
+            border: 1px solid #4CAF50;
+        }
+        
+        .status.error {
+            background-color: #5a2d2d;
+            border: 1px solid #f44336;
+        }
+        
+        .status.info {
+            background-color: #2d4a5a;
+            border: 1px solid #2196F3;
+        }
+        
+        #loadingOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        
+        .spinner {
+            border: 4px solid #333;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .instructions {
+            background-color: #2d4a5a;
+            border: 1px solid #2196F3;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <h1>3D Mesh Segmentation</h1>
+            
+            <div class="instructions">
+                <strong>Instructions:</strong><br>
+                1. Load a mesh file<br>
+                2. Click on the 3D model to select seed points<br>
+                3. Run segmentation<br>
+                4. Download results
+            </div>
+            
+            <div id="status"></div>
+            
+            <div class="control-group">
+                <label for="meshPath">Mesh File Path:</label>
+                <input type="text" id="meshPath" value="input/run/example.obj">
+                
+                <label for="curvaturePenalty">Curvature Penalty Strength:</label>
+                <input type="number" id="curvaturePenalty" value="100" step="0.1">
+                
+                <button onclick="loadMesh()">Load Mesh</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Seed Selection Mode:</label>
+                <button id="seedModeBtn" onclick="toggleSeedMode()">Enable Seed Selection</button>
+                <button onclick="clearSeeds()">Clear All Seeds</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Selected Seeds (<span id="seedCount">0</span>):</label>
+                <div id="seedList" class="seed-list">
+                    <div style="color: #888; text-align: center;">No seeds selected</div>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label for="outputDir">Output Directory:</label>
+                <input type="text" id="outputDir" value="output">
+                
+                <button onclick="runSegmentation()" id="segmentBtn" disabled>Run Segmentation</button>
+            </div>
+            
+            <div class="control-group">
+                <button onclick="downloadSegments()" id="downloadBtn" disabled>Download Segments</button>
+            </div>
+        </div>
+        
+        <div id="viewer">
+            <div id="loadingOverlay">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/three@0.155.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Ensure OrbitControls is available
+        if (typeof THREE === 'undefined') {
+            console.error('Three.js failed to load');
+        }
+        console.log('Three.js loaded, version:', THREE.REVISION);
+    </script>
+    
+    <script>
+        // Global variables
+        let scene, camera, renderer, controls;
+        let meshObject = null;
+        let selectedSeeds = [];
+        let seedSelectionMode = false;
+        let meshData = null;
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        
+        // Initialize Three.js scene
+        function initThreeJS() {
+            try {
+                console.log('Initializing Three.js...');
+                const viewer = document.getElementById('viewer');
+                
+                if (!viewer) {
+                    console.error('Viewer element not found');
+                    return;
+                }
+                
+                // Scene
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x222222);
+                console.log('Scene created');
+                
+                // Camera
+                camera = new THREE.PerspectiveCamera(75, viewer.clientWidth / viewer.clientHeight, 0.1, 1000);
+                camera.position.set(0, 0, 5);
+                console.log('Camera created');
+                
+                // Renderer
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                viewer.appendChild(renderer.domElement);
+                console.log('Renderer created and added to DOM');
+                
+                // Controls - check if OrbitControls is available
+                if (typeof THREE.OrbitControls !== 'undefined') {
+                    controls = new THREE.OrbitControls(camera, renderer.domElement);
+                    controls.enableDamping = true;
+                    controls.dampingFactor = 0.1;
+                    console.log('OrbitControls initialized');
+                } else {
+                    console.warn('OrbitControls not available, using basic camera');
+                    controls = null;
+                }
+                
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+                scene.add(ambientLight);
+                
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(1, 1, 1);
+                directionalLight.castShadow = true;
+                scene.add(directionalLight);
+                console.log('Lighting added');
+                
+                // Event listeners
+                renderer.domElement.addEventListener('click', onMouseClick);
+                window.addEventListener('resize', onWindowResize);
+                
+                // Animation loop
+                animate();
+                console.log('Three.js initialization complete');
+                
+                // Add a test cube to verify rendering
+                const geometry = new THREE.BoxGeometry(1, 1, 1);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+                const testCube = new THREE.Mesh(geometry, material);
+                scene.add(testCube);
+                console.log('Test cube added');
+                
+            } catch (error) {
+                console.error('Error initializing Three.js:', error);
+                showStatus('Error initializing 3D viewer: ' + error.message, 'error');
+            }
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls) {
+                controls.update();
+            }
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+        }
+        
+        function onWindowResize() {
+            const viewer = document.getElementById('viewer');
+            camera.aspect = viewer.clientWidth / viewer.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+        }
+        
+        function onMouseClick(event) {
+            if (!seedSelectionMode || !meshObject) return;
+            
+            const viewer = document.getElementById('viewer');
+            const rect = viewer.getBoundingClientRect();
+            
+            mouse.x = ((event.clientX - rect.left) / viewer.clientWidth) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / viewer.clientHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(meshObject);
+            
+            if (intersects.length > 0) {
+                const point = intersects[0].point;
+                addSeed(point.x, point.y, point.z);
+            }
+        }
+        
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            if (type !== 'error') {
+                setTimeout(() => {
+                    status.innerHTML = '';
+                }, 5000);
+            }
+        }
+        
+        function showLoading(show) {
+            document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+        }
+        
+        async function loadMesh() {
+            const meshPath = document.getElementById('meshPath').value;
+            const curvaturePenalty = parseFloat(document.getElementById('curvaturePenalty').value);
+            
+            showLoading(true);
+            showStatus('Loading mesh...', 'info');
+            
+            try {
+                const response = await fetch('/load_mesh', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        mesh_path: meshPath,
+                        curvature_penalty_strength: curvaturePenalty
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    meshData = result;
+                    displayMesh(result);
+                    showStatus(`Mesh loaded successfully! ${result.total_faces} faces, ${result.active_faces} active.`, 'success');
+                    clearSeeds();
+                } else {
+                    showStatus(`Error loading mesh: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Network error: ${error.message}`, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayMesh(data) {
+            try {
+                console.log('Displaying mesh with', data.vertices.length, 'vertices and', data.faces.length, 'faces');
+                
+                // Remove existing mesh
+                if (meshObject) {
+                    scene.remove(meshObject);
+                }
+                
+                // Remove test cube if it exists
+                scene.traverse((child) => {
+                    if (child.geometry && child.geometry.type === 'BoxGeometry') {
+                        scene.remove(child);
+                    }
+                });
+                
+                // Create geometry
+                const geometry = new THREE.BufferGeometry();
+                
+                // Convert vertices and faces to Three.js format
+                const vertices = new Float32Array(data.vertices.flat());
+                const indices = new Uint32Array(data.faces.flat());
+                
+                geometry.setIndex(indices);
+                geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                geometry.computeVertexNormals();
+                console.log('Geometry created with', vertices.length/3, 'vertices');
+                
+                // Create material
+                const material = new THREE.MeshLambertMaterial({
+                    color: 0x888888,
+                    wireframe: false,
+                    side: THREE.DoubleSide
+                });
+                
+                // Create mesh
+                meshObject = new THREE.Mesh(geometry, material);
+                scene.add(meshObject);
+                console.log('Mesh added to scene');
+                
+                // Center and scale the mesh
+                const box = new THREE.Box3().setFromObject(meshObject);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                
+                meshObject.position.sub(center);
+                meshObject.scale.setScalar(3 / maxDim);
+                
+                camera.position.set(0, 0, 5);
+                if (controls) {
+                    controls.reset();
+                }
+                
+                console.log('Mesh positioned and scaled');
+                
+            } catch (error) {
+                console.error('Error displaying mesh:', error);
+                showStatus('Error displaying mesh: ' + error.message, 'error');
+            }
+        }
+        
+        function toggleSeedMode() {
+            seedSelectionMode = !seedSelectionMode;
+            const btn = document.getElementById('seedModeBtn');
+            
+            if (seedSelectionMode) {
+                btn.textContent = 'Disable Seed Selection';
+                btn.style.backgroundColor = '#f44336';
+                showStatus('Seed selection enabled. Click on the mesh to add seeds.', 'info');
+            } else {
+                btn.textContent = 'Enable Seed Selection';
+                btn.style.backgroundColor = '#4CAF50';
+                showStatus('Seed selection disabled.', 'info');
+            }
+        }
+        
+        function addSeed(x, y, z) {
+            selectedSeeds.push([x, y, z]);
+            updateSeedDisplay();
+            
+            // Add visual marker
+            const geometry = new THREE.SphereGeometry(0.02, 8, 8);
+            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const marker = new THREE.Mesh(geometry, material);
+            marker.position.set(x, y, z);
+            scene.add(marker);
+            
+            showStatus(`Seed ${selectedSeeds.length} added at (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`, 'success');
+        }
+        
+        function clearSeeds() {
+            selectedSeeds = [];
+            updateSeedDisplay();
+            
+            // Remove visual markers
+            const markersToRemove = [];
+            scene.traverse((child) => {
+                if (child.geometry && child.geometry.type === 'SphereGeometry') {
+                    markersToRemove.push(child);
+                }
+            });
+            markersToRemove.forEach(marker => scene.remove(marker));
+            
+            // Reset mesh colors if segmented
+            if (meshObject && meshObject.material.vertexColors) {
+                meshObject.material = new THREE.MeshLambertMaterial({
+                    color: 0x888888,
+                    wireframe: false,
+                    side: THREE.DoubleSide
+                });
+            }
+            
+            showStatus('All seeds cleared.', 'info');
+        }
+        
+        function updateSeedDisplay() {
+            const seedList = document.getElementById('seedList');
+            const seedCount = document.getElementById('seedCount');
+            const segmentBtn = document.getElementById('segmentBtn');
+            
+            seedCount.textContent = selectedSeeds.length;
+            
+            if (selectedSeeds.length === 0) {
+                seedList.innerHTML = '<div style="color: #888; text-align: center;">No seeds selected</div>';
+                segmentBtn.disabled = true;
+            } else {
+                seedList.innerHTML = selectedSeeds.map((seed, index) => 
+                    `<div class="seed-item">Seed ${index + 1}: (${seed[0].toFixed(3)}, ${seed[1].toFixed(3)}, ${seed[2].toFixed(3)})</div>`
+                ).join('');
+                segmentBtn.disabled = false;
+            }
+        }
+        
+        async function runSegmentation() {
+            if (selectedSeeds.length === 0) {
+                showStatus('Please select at least one seed point.', 'error');
+                return;
+            }
+            
+            showLoading(true);
+            showStatus('Running segmentation...', 'info');
+            
+            try {
+                const response = await fetch('/segment_with_seeds', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        clicked_points: selectedSeeds,
+                        output_dir: document.getElementById('outputDir').value
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    displaySegmentedMesh(result.face_colors);
+                    showStatus(`Segmentation complete! ${result.segments_created} segments created.`, 'success');
+                    document.getElementById('downloadBtn').disabled = false;
+                } else {
+                    showStatus(`Segmentation error: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Network error: ${error.message}`, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displaySegmentedMesh(faceColors) {
+            if (!meshObject || !meshData) return;
+            
+            // Create new geometry with face colors
+            const geometry = new THREE.BufferGeometry();
+            
+            const vertices = [];
+            const colors = [];
+            
+            // Convert face-based coloring to vertex-based
+            for (let i = 0; i < meshData.faces.length; i++) {
+                const face = meshData.faces[i];
+                const color = faceColors[i];
+                
+                for (let j = 0; j < 3; j++) {
+                    const vertexIndex = face[j];
+                    const vertex = meshData.vertices[vertexIndex];
+                    vertices.push(vertex[0], vertex[1], vertex[2]);
+                    colors.push(color[0], color[1], color[2]);
+                }
+            }
+            
+            geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+            geometry.computeVertexNormals();
+            
+            // Create new material with vertex colors
+            const material = new THREE.MeshLambertMaterial({
+                vertexColors: true,
+                side: THREE.DoubleSide
+            });
+            
+            // Replace the mesh
+            scene.remove(meshObject);
+            meshObject = new THREE.Mesh(geometry, material);
+            scene.add(meshObject);
+            
+            // Maintain position and scale
+            const box = new THREE.Box3().setFromObject(meshObject);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            
+            meshObject.position.sub(center);
+            meshObject.scale.setScalar(3 / maxDim);
+        }
+        
+        function downloadSegments() {
+            const outputDir = document.getElementById('outputDir').value;
+            window.open(`/download_segments?output_dir=${encodeURIComponent(outputDir)}`, '_blank');
+        }
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            initThreeJS();
+        });
+    </script>
+</body>
+</html>
