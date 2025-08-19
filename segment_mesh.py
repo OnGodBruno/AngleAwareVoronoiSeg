@@ -9,15 +9,59 @@ import argparse
 
 import time # Debug
 
-
-def load_and_clean_mesh(mesh_path):
+def load_and_clean_mesh(mesh_path, texture_path=None):
     """
     Load and clean a 3D mesh.
     """
-    mesh = trimesh.load(mesh_path, process=True)
-    mesh.remove_unreferenced_vertices()
-    mesh.remove_infinite_values()
+    if texture_path and os.path.exists(texture_path):
+        mesh = trimesh.load(mesh_path, process=False)
+
+        from PIL import Image
+        texture_image = Image.open(texture_path)
+
+        material = trimesh.visual.material.SimpleMaterial(image=texture_image)
+
+        if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+            mesh.visual = trimesh.visual.TextureVisuals(
+                uv=mesh.visual.uv,
+                material=material
+            )
+
+        mesh.merge_vertices()
+        mesh.remove_unreferenced_vertices()
+        mesh.remove_infinite_values()
+    else:
+        mesh = trimesh.load(mesh_path, process=True)
+        mesh.remove_unreferenced_vertices()
+        mesh.remove_infinite_values()
+
     return mesh
+
+def extract_face_colors(mesh):
+    # Vertex colors
+    if getattr(mesh.visual, 'vertex_colors', None) is not None and mesh.visual.vertex_colors.size:
+        v_rgb = mesh.visual.vertex_colors[:, :3].astype(np.float32) / 255.0
+        face_rgb = v_rgb[mesh.faces].mean(axis=1)
+
+    # UV texture
+    elif hasattr(mesh.visual, "uv") and mesh.visual.uv is not None and hasattr(mesh.visual, "material") and hasattr(
+            mesh.visual.material, "image"):
+        tex = np.asarray(mesh.visual.material.image.convert("RGB"), dtype=np.float32) / 255.0
+        h, w, _ = tex.shape
+
+        face_uvs = mesh.visual.uv[mesh.faces]
+        uv_centers = face_uvs.mean(axis=1)
+
+        px = (uv_centers[:, 0] * (w - 1)).astype(int).clip(0, w - 1)
+        py = ((1 - uv_centers[:, 1]) * (h - 1)).astype(int).clip(0, h - 1)
+        face_rgb = tex[py, px]
+    else:
+        return None
+
+    # Convert to LAB
+    from skimage.color import rgb2lab
+    face_lab = rgb2lab(face_rgb.reshape(-1, 1, 3)).reshape(-1, 3)
+    return face_lab
 
 
 def compute_enhanced_distance_metrics(mesh, adj, user_seeds=None):
@@ -133,13 +177,14 @@ def compute_user_seed_affinity(adj, user_seeds, face_centers):
     
     return affinities
 
-def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.radians(60), user_seeds=None, enhanced_mode=False):
+def build_adjacency_graph(mesh, curvature_penalty_strength, texture_strength=5, max_normal_angle=np.radians(60), user_seeds=None, enhanced_mode=False):
     """
     Build a face adjacency graph with curvature-aware edge weights.
     
     Args:
         mesh: trimesh object
         curvature_penalty_strength: float, strength of curvature penalty
+        texture_strength: float, strength of texture_penalty
         max_normal_angle: float, maximum angle between face normals to consider adjacent
         user_seeds: list, user-selected seed points or face indices
         enhanced_mode: bool, whether to use enhanced distance metrics
@@ -177,11 +222,23 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
         # Enhanced weight calculation
         curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])
         spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
+
+        # Texture penalty
+        face_lab = extract_face_colors(mesh)
+        if face_lab is None:
+            texture_penalty = np.ones_like(spatial_penalty)
+        else:
+            lab1 = face_lab[adj[mask][:, 0]]
+            lab2 = face_lab[adj[mask][:, 1]]
+
+            deltaE_norm = np.linalg.norm(lab1 - lab2, axis=1) / 100.0
+            texture_penalty = np.exp(texture_strength * deltaE_norm)
+
         area_penalty = 1 + area_ratio[mask] * 0.5  # Penalize area differences
         shape_penalty = 1 + shape_similarity[mask] * 0.3  # Penalize shape differences
         user_penalty = 2.0 - seed_affinity[mask]  # Lower penalty near user seeds
         
-        weights = spatial_penalty * curvature_penalty * area_penalty * shape_penalty * user_penalty
+        weights = spatial_penalty * curvature_penalty * area_penalty * shape_penalty * user_penalty * texture_penalty
         
     else:
         # Original calculation
@@ -199,7 +256,19 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.
 
         curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])
         spatial_penalty = 1 + (spatial_dist[mask] / avg_edge_length) ** 2
-        weights = spatial_penalty * curvature_penalty
+
+        # Texture penalty
+        face_lab = extract_face_colors(mesh)
+        if face_lab is None:
+            texture_penalty = np.ones_like(spatial_penalty)
+        else:
+            lab1 = face_lab[adj[mask][:, 0]]
+            lab2 = face_lab[adj[mask][:, 1]]
+
+            deltaE_norm = np.linalg.norm(lab1 - lab2, axis=1) / 100.0
+            texture_penalty = np.exp(texture_strength * deltaE_norm)
+
+        weights = spatial_penalty * curvature_penalty * texture_penalty
 
     # Filters the edges
     adj_valid = adj[mask]
@@ -385,6 +454,8 @@ def main():
         default=100.0,
         help="Angle punishment strength",
     )
+    parser.add_argument("--texture_strength", type=float, default=5.0,
+                        help="Texture difference penalty strength")
     parser.add_argument(
         "--seed_idx",
         type=int,
