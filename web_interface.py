@@ -11,7 +11,7 @@ from flask_cors import CORS
 import tempfile
 import zipfile
 from werkzeug.utils import secure_filename
-from segment_mesh import load_and_clean_mesh, build_adjacency_graph, segment_mesh, export_segments
+from segment_mesh import load_and_clean_mesh, build_adjacency_graph, segment_mesh, export_segment
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
@@ -24,21 +24,19 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Global variables to store current mesh and processing data
 current_mesh = None
 current_sparse_matrix = None
-current_face_coords = None
-current_active_faces = None
+current_face_centers = None
 current_mesh_path = None
 current_curvature_penalty = 100.0
-current_enhanced_mode = False
 
 @app.route('/')
 def index():
     """Serve the main interface page."""
-    return render_template('index_simple.html')
+    return render_template('index.html')
 
 @app.route('/upload_mesh', methods=['POST'])
 def upload_mesh():
     """Upload and load a mesh file."""
-    global current_mesh, current_sparse_matrix, current_face_coords, current_active_faces, current_mesh_path, current_curvature_penalty, current_enhanced_mode
+    global current_mesh, current_sparse_matrix, current_face_centers, current_mesh_path, current_curvature_penalty
     
     try:
         if 'file' not in request.files:
@@ -54,11 +52,9 @@ def upload_mesh():
         
         # Get parameters from form data
         curvature_penalty_strength = float(request.form.get('curvature_penalty_strength', 100.0))
-        enhanced_mode = request.form.get('enhanced_mode', 'false').lower() == 'true'
         
         # Store settings
         current_curvature_penalty = curvature_penalty_strength
-        current_enhanced_mode = enhanced_mode
         
         # Save uploaded file
         filename = secure_filename(file.filename)
@@ -100,7 +96,6 @@ def upload_mesh():
                                 vertex_offset += len(geom.vertices)
                         
                         if combined_vertices:
-                            import numpy as np
                             # Create combined mesh
                             mesh = trimesh.Trimesh(
                                 vertices=np.vstack(combined_vertices),
@@ -157,8 +152,9 @@ def upload_mesh():
             if len(current_mesh.vertices) == 0 or len(current_mesh.faces) == 0:
                 return jsonify({'success': False, 'error': 'Mesh has no vertices or faces'})
             
-            current_sparse_matrix, current_face_coords, current_active_faces = build_adjacency_graph(
-                current_mesh, curvature_penalty_strength, enhanced_mode=False  # Always use fast mode for initial loading
+            # Build adjacency graph - updated to match segment_mesh.py signature
+            current_sparse_matrix, current_face_centers = build_adjacency_graph(
+                current_mesh, curvature_penalty_strength, user_seeds=None
             )
             
             # Prepare mesh data for Three.js
@@ -178,7 +174,6 @@ def upload_mesh():
                 'faces': faces,
                 'face_centers': face_centers,
                 'total_faces': len(current_mesh.faces),
-                'active_faces': len(current_active_faces),
                 'filename': filename
             })
             
@@ -192,17 +187,15 @@ def upload_mesh():
 @app.route('/load_mesh', methods=['POST'])
 def load_mesh():
     """Load a mesh file and prepare it for visualization."""
-    global current_mesh, current_sparse_matrix, current_face_coords, current_active_faces, current_mesh_path, current_curvature_penalty, current_enhanced_mode
+    global current_mesh, current_sparse_matrix, current_face_centers, current_mesh_path, current_curvature_penalty
     
     try:
         data = request.json
         mesh_path = data.get('mesh_path', 'input/run/example.obj')
         curvature_penalty_strength = data.get('curvature_penalty_strength', 100.0)
-        enhanced_mode = data.get('enhanced_mode', False)
         
         # Store settings
         current_curvature_penalty = curvature_penalty_strength
-        current_enhanced_mode = enhanced_mode
         
         # Convert to absolute path
         if not os.path.isabs(mesh_path):
@@ -212,8 +205,10 @@ def load_mesh():
         
         # Load and process mesh
         current_mesh = load_and_clean_mesh(mesh_path)
-        current_sparse_matrix, current_face_coords, current_active_faces = build_adjacency_graph(
-            current_mesh, curvature_penalty_strength, enhanced_mode=False  # Always use fast mode for initial loading
+        
+        # Build adjacency graph - updated to match segment_mesh.py signature
+        current_sparse_matrix, current_face_centers = build_adjacency_graph(
+            current_mesh, curvature_penalty_strength, user_seeds=None
         )
         
         # Prepare mesh data for Three.js
@@ -226,8 +221,7 @@ def load_mesh():
             'vertices': vertices,
             'faces': faces,
             'face_centers': face_centers,
-            'total_faces': len(current_mesh.faces),
-            'active_faces': len(current_active_faces)
+            'total_faces': len(current_mesh.faces)
         })
         
     except Exception as e:
@@ -236,13 +230,12 @@ def load_mesh():
 @app.route('/segment_with_seeds', methods=['POST'])
 def segment_with_seeds():
     """Perform segmentation using manually selected seed faces."""
-    global current_mesh, current_sparse_matrix, current_face_coords, current_active_faces
+    global current_mesh, current_sparse_matrix, current_face_centers
     
     try:
         data = request.json
         clicked_points = data.get('clicked_points', [])
         output_dir = data.get('output_dir', 'output')
-        enhanced_mode = data.get('enhanced_mode', True)  # Default to enhanced for user seeds
         
         if not clicked_points:
             return jsonify({'success': False, 'error': 'No seed points selected'})
@@ -258,45 +251,26 @@ def segment_with_seeds():
             # Find the closest face center to the clicked point
             distances = np.linalg.norm(face_centers - np.array(point), axis=1)
             closest_face_idx = np.argmin(distances)
-            
-            # Convert global face index to active face matrix index
-            if closest_face_idx in current_active_faces:
-                matrix_idx = np.where(current_active_faces == closest_face_idx)[0][0]
-                seed_face_indices.append(matrix_idx)
+            seed_face_indices.append(closest_face_idx)
         
         if not seed_face_indices:
-            return jsonify({'success': False, 'error': 'No valid seed faces found in active graph'})
+            return jsonify({'success': False, 'error': 'No valid seed faces found'})
         
+        # Always use enhanced mode with user seeds to improve segmentation quality
+        print("Rebuilding graph with user seed information for enhanced segmentation...")
+        current_sparse_matrix, current_face_centers = build_adjacency_graph(
+            current_mesh, current_curvature_penalty, user_seeds=seed_face_indices
+        )
+        print(f"Enhanced graph rebuilt with {len(seed_face_indices)} user seeds")
+        
+        # Create seed indices array for the matrix (face indices are already in correct format)
         seed_idx = np.array(seed_face_indices)
-        
-        # If enhanced mode is enabled, rebuild the graph with user seed information
-        if enhanced_mode:
-            print("Rebuilding graph with user seed information for enhanced segmentation...")
-            # Get the actual face indices for user seeds
-            user_seed_faces = [current_active_faces[idx] for idx in seed_face_indices]
-            
-            # Rebuild graph with enhanced distance metrics
-            current_sparse_matrix, current_face_coords, current_active_faces = build_adjacency_graph(
-                current_mesh, current_curvature_penalty, enhanced_mode=True, user_seeds=user_seed_faces
-            )
-            
-            # Recompute seed indices for the new graph
-            seed_face_indices = []
-            for point in clicked_points:
-                distances = np.linalg.norm(face_centers - np.array(point), axis=1)
-                closest_face_idx = np.argmin(distances)
-                if closest_face_idx in current_active_faces:
-                    matrix_idx = np.where(current_active_faces == closest_face_idx)[0][0]
-                    seed_face_indices.append(matrix_idx)
-            
-            seed_idx = np.array(seed_face_indices)
-            print(f"Enhanced graph rebuilt with {len(seed_idx)} seeds")
         
         # Perform segmentation
         face_labels = segment_mesh(current_sparse_matrix, seed_idx)
         
-        # Export segments
-        export_segments(current_mesh, face_labels, seed_idx, current_active_faces, output_dir)
+        # Export segments using the corrected function name
+        export_segment(current_mesh, face_labels, seed_idx, output_dir)
         
         # Create segment colors for visualization
         colors = np.array([
@@ -305,57 +279,25 @@ def segment_with_seeds():
             [0.5, 0.0, 1.0], [0.0, 0.5, 0.5], [0.8, 0.2, 0.2], [0.2, 0.8, 0.2]
         ])
         
-        # Initialize all faces with default color using NumPy for efficiency
+        # Initialize all faces with default color
         total_faces = len(current_mesh.faces)
-        face_colors = np.full((total_faces, 3), [0.2, 0.2, 0.3], dtype=np.float32)
+        face_colors = np.full((total_faces, 3), [0.7, 0.7, 0.7], dtype=np.float32)
         
-        # Create boolean mask for segmented faces (much faster than set)
-        segmented_mask = np.zeros(total_faces, dtype=bool)
-        
-        # Color segments efficiently using vectorized operations
+        # Color segments
         if face_labels:
-            # Convert to arrays for vectorized operations
-            row_indices = np.array(list(face_labels.keys()))
-            seed_rows = np.array(list(face_labels.values()))
-            
-            # Map seed rows to segment IDs
+            # Map seed indices to segment colors
             seed_to_segment = {seed: i for i, seed in enumerate(seed_idx)}
-            segment_ids = np.array([seed_to_segment[seed] for seed in seed_rows])
             
-            # Get face IDs and colors in one go
-            face_ids = current_active_faces[row_indices]
-            color_indices = segment_ids % len(colors)
-            
-            # Assign colors vectorized
-            face_colors[face_ids] = colors[color_indices]
-            segmented_mask[face_ids] = True
+            for face_idx, seed_face in face_labels.items():
+                if seed_face in seed_to_segment:
+                    segment_id = seed_to_segment[seed_face]
+                    color_idx = segment_id % len(colors)
+                    face_colors[face_idx] = colors[color_idx]
         
-        colored_faces = np.sum(segmented_mask)
-        
-        # Better solution: Assign uncolored faces to the most dominant segment
-        uncolored_faces = np.where(~segmented_mask)[0]
-        
-        if len(uncolored_faces) > 0:
-            print(f"Assigning {len(uncolored_faces)} uncolored faces to first segment...")
-            
-            # Simple and fast: assign all uncolored faces to the first segment
-            if len(seed_idx) > 0:
-                face_colors[uncolored_faces] = colors[0]
-                segmented_mask[uncolored_faces] = True
-                print(f"Assigned {len(uncolored_faces)} faces to first segment")
-            else:
-                # Fallback: assign to default color
-                face_colors[uncolored_faces] = colors[0]
-                segmented_mask[uncolored_faces] = True
-        
-        colored_faces = np.sum(segmented_mask)
-        
-        # Convert back to list format for JSON serialization
+        # Convert to list format for JSON serialization
         face_colors_list = face_colors.tolist()
         
-        # Log statistics for debugging
-        print(f"Final segmentation stats: {colored_faces}/{total_faces} faces colored ({(colored_faces/total_faces)*100:.1f}%)")
-        print(f"Segmented faces from algorithm: {np.sum(segmented_mask)}, Uncolored faces filled by nearest neighbor: {len(uncolored_faces) if 'uncolored_faces' in locals() else 0}")
+        print(f"Segmentation completed with {len(seed_idx)} segments")
         
         return jsonify({
             'success': True,
@@ -364,13 +306,15 @@ def segment_with_seeds():
             'output_dir': output_dir,
             'stats': {
                 'total_faces': total_faces,
-                'colored_faces': int(colored_faces),
-                'active_faces': len(current_active_faces),
-                'face_labels': len(face_labels)
+                'segmented_faces': len(face_labels),
+                'coverage_ratio': len(face_labels) / total_faces if total_faces > 0 else 0.0
             }
         })
         
     except Exception as e:
+        import traceback
+        print(f"Error in segmentation: {e}")
+        print("Full traceback:", traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/download_segments')
@@ -378,6 +322,9 @@ def download_segments():
     """Create and download a zip file containing all segment files."""
     try:
         output_dir = request.args.get('output_dir', 'output')
+        
+        if not os.path.exists(output_dir):
+            return jsonify({'success': False, 'error': 'Output directory does not exist'})
         
         # Create a temporary zip file
         temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')

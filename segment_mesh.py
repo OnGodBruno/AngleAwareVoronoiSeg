@@ -9,8 +9,6 @@ import argparse
 
 import time # Debug
 
-from trimesh.voxel.ops import sparse_to_matrix
-
 
 def load_and_clean_mesh(mesh_path):
     """
@@ -60,7 +58,26 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     spatial_penalty = 1 + (spatial_dist / avg_edge_length) ** 2
 
     weights = spatial_penalty * curvature_penalty
-    print("Weights:", weights)
+
+    # Apply user seed influence to weights if provided
+    if user_seeds is not None and len(user_seeds) > 0:
+        print(f"Applying user seed influence for {len(user_seeds)} seeds")
+        user_seed_set = set(user_seeds)
+        
+        # Create seed proximity bonus for edges involving seed faces
+        seed_bonus_factor = 0.5  # Reduce weights for edges involving seed faces
+        
+        # Check which edges connect to seed faces
+        face1_is_seed = np.isin(adj[:, 0], list(user_seed_set))
+        face2_is_seed = np.isin(adj[:, 1], list(user_seed_set))
+        
+        # Apply bonus to edges that connect to at least one seed face
+        seed_connected_edges = face1_is_seed | face2_is_seed
+        weights[seed_connected_edges] *= seed_bonus_factor
+        
+        print(f"Applied seed bonus to {np.sum(seed_connected_edges)} edges")
+
+    print("Final weights range:", np.min(weights), "to", np.max(weights))
 
     row = adj[:, 0]
     col = adj[:, 1]
@@ -198,7 +215,7 @@ def main():
     mesh = load_and_clean_mesh(args.mesh_path)
     print("Faces:", len(mesh.faces))  # DEBUG
 
-    sparse_matrix, face_centers = build_adjacency_graph(mesh, args.curvature_penalty_strength)
+    sparse_matrix, face_centers = build_adjacency_graph(mesh, args.curvature_penalty_strength, user_seeds=None)
     print("Graph Built")
 
     seed_idx = select_seeds(face_centers, args.n_seeds)
