@@ -244,14 +244,38 @@ def segment_with_seeds():
             return jsonify({'success': False, 'error': 'No mesh loaded'})
         
         # Convert clicked 3D points to face indices
+        # NOTE: Clicked points are in the transformed display coordinate system
+        # We need to transform them back to the original mesh coordinate system
         seed_face_indices = []
         face_centers = current_mesh.triangles_center
         
+        # Calculate the same transformation that was applied in the frontend
+        # 1. Get mesh bounding box
+        vertices = current_mesh.vertices
+        min_coords = np.min(vertices, axis=0)
+        max_coords = np.max(vertices, axis=0)
+        center = (min_coords + max_coords) / 2
+        size = max_coords - min_coords
+        max_dim = np.max(size)
+        
+        # 2. Calculate the display transformation parameters
+        # In frontend: scale = 4 / maxDim, position = -center
+        display_scale = 4.0 / max_dim if max_dim > 0 else 1.0
+        display_center = -center
+        
+        print(f"Mesh transformation: center={center}, max_dim={max_dim}, display_scale={display_scale}")
+        
         for point in clicked_points:
-            # Find the closest face center to the clicked point
-            distances = np.linalg.norm(face_centers - np.array(point), axis=1)
+            # Transform clicked point back to original coordinate system
+            # Reverse the display transformation: point_original = (point_display - display_center) / display_scale
+            original_point = (np.array(point) - display_center) / display_scale
+            
+            # Find the closest face center to the original point
+            distances = np.linalg.norm(face_centers - original_point, axis=1)
             closest_face_idx = np.argmin(distances)
             seed_face_indices.append(closest_face_idx)
+            
+            print(f"Clicked point {point} -> original {original_point} -> face {closest_face_idx}")
         
         if not seed_face_indices:
             return jsonify({'success': False, 'error': 'No valid seed faces found'})
@@ -283,11 +307,16 @@ def segment_with_seeds():
         total_faces = len(current_mesh.faces)
         face_colors = np.full((total_faces, 3), [0.7, 0.7, 0.7], dtype=np.float32)
         
+        # Create mapping of seed indices to their colors for the frontend
+        seed_colors = []
+        seed_to_segment = {seed: i for i, seed in enumerate(seed_idx)}
+        
+        for i, seed_face in enumerate(seed_idx):
+            color_idx = i % len(colors)
+            seed_colors.append(colors[color_idx].tolist())
+        
         # Color segments
         if face_labels:
-            # Map seed indices to segment colors
-            seed_to_segment = {seed: i for i, seed in enumerate(seed_idx)}
-            
             for face_idx, seed_face in face_labels.items():
                 if seed_face in seed_to_segment:
                     segment_id = seed_to_segment[seed_face]
@@ -303,6 +332,8 @@ def segment_with_seeds():
             'success': True,
             'segments_created': len(seed_idx),
             'face_colors': face_colors_list,
+            'seed_colors': seed_colors,
+            'clicked_points': clicked_points,
             'output_dir': output_dir,
             'stats': {
                 'total_faces': total_faces,

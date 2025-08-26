@@ -456,8 +456,9 @@
                 1. Upload or load a mesh file (.obj, .glb, .gltf)<br>
                 2. Adjust curvature penalty strength if needed<br>
                 3. Click on the 3D model to select seed points<br>
-                4. Run segmentation<br>
-                5. Download your segmented results
+                4. Run segmentation - seed points will be colored by their segments<br>
+                5. Use "Toggle Seeds" to show/hide seed points<br>
+                6. Download your segmented results
             </div>
             
             <div class="control-section">
@@ -515,7 +516,7 @@
                         <i class="fas fa-trash"></i> Clear Seeds
                     </button>
                     <button class="btn-secondary" onclick="toggleSeedMarkers()">
-                        <i class="fas fa-eye"></i> Toggle Markers
+                        <i class="fas fa-eye"></i> Toggle Seeds
                     </button>
                 </div>
             </div>
@@ -1212,11 +1213,18 @@
             selectedSeeds.push([x, y, z]);
             updateSeedDisplay();
             
-            // Add visual marker
-            const geometry = new THREE.SphereGeometry(0.02, 8, 8);
-            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            // Add visual marker with default color (will be colored later during segmentation)
+            const geometry = new THREE.SphereGeometry(0.04, 16, 16);
+            const material = new THREE.MeshLambertMaterial({ 
+                color: 0xff0000,
+                opacity: 0.9,
+                transparent: true,
+                emissive: 0x330000,
+                emissiveIntensity: 0.1
+            });
             const marker = new THREE.Mesh(geometry, material);
             marker.position.set(x, y, z);
+            marker.userData = { isSeedMarker: true, seedIndex: selectedSeeds.length - 1 };
             scene.add(marker);
             
             showStatus(`Seed ${selectedSeeds.length} added at (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`, 'success');
@@ -1226,41 +1234,55 @@
             // Check if there are any seed markers visible
             let markersVisible = false;
             scene.traverse((child) => {
-                if (child.geometry && child.geometry.type === 'SphereGeometry') {
-                    markersVisible = true;
+                if (child.userData && child.userData.isSeedMarker) {
+                    markersVisible = child.visible;
+                    return; // Exit early since we found one
                 }
             });
             
-            if (markersVisible) {
-                // Hide markers
-                removeSeedMarkers();
-                showStatus('Seed markers hidden', 'info');
-            } else {
-                // Show markers if we have seeds
-                if (selectedSeeds.length > 0) {
-                    selectedSeeds.forEach((seed, index) => {
-                        const geometry = new THREE.SphereGeometry(0.02, 8, 8);
-                        const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-                        const marker = new THREE.Mesh(geometry, material);
-                        marker.position.set(seed[0], seed[1], seed[2]);
-                        scene.add(marker);
-                    });
-                    showStatus('Seed markers shown', 'info');
-                } else {
-                    showStatus('No seeds to show', 'info');
+            // Toggle visibility of all seed markers
+            scene.traverse((child) => {
+                if (child.userData && child.userData.isSeedMarker) {
+                    child.visible = !markersVisible;
                 }
-            }
+            });
+            
+            const status = markersVisible ? 'hidden' : 'shown';
+            showStatus(`Seed markers ${status}`, 'info');
         }
         
         function removeSeedMarkers() {
             // Remove visual markers from scene
             const markersToRemove = [];
             scene.traverse((child) => {
-                if (child.geometry && child.geometry.type === 'SphereGeometry') {
+                if (child.userData && child.userData.isSeedMarker) {
                     markersToRemove.push(child);
                 }
             });
-            markersToRemove.forEach(marker => scene.remove(marker));
+            markersToRemove.forEach(marker => {
+                scene.remove(marker);
+                if (marker.geometry) marker.geometry.dispose();
+                if (marker.material) marker.material.dispose();
+            });
+        }
+        
+        function updateSeedColors(seedColors) {
+            // Update existing seed markers with their segment colors
+            scene.traverse((child) => {
+                if (child.userData && child.userData.isSeedMarker) {
+                    const seedIndex = child.userData.seedIndex;
+                    if (seedIndex < seedColors.length) {
+                        const color = seedColors[seedIndex];
+                        child.material.color.setRGB(color[0], color[1], color[2]);
+                        // Add some emissive color for better visibility
+                        child.material.emissive.setRGB(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2);
+                        // Make the seeds slightly larger and more visible
+                        child.scale.setScalar(1.3);
+                        child.material.opacity = 0.95;
+                        updateDebugInfo(`Updated seed ${seedIndex} to color [${color[0].toFixed(2)}, ${color[1].toFixed(2)}, ${color[2].toFixed(2)}]`);
+                    }
+                }
+            });
         }
         
         function clearSeeds() {
@@ -1323,8 +1345,10 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    // Remove seed markers before displaying segmented mesh
-                    removeSeedMarkers();
+                    // Update seed colors and keep them visible
+                    if (result.seed_colors) {
+                        updateSeedColors(result.seed_colors);
+                    }
                     
                     displaySegmentedMesh(result.face_colors);
                     let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created.`;
@@ -1334,7 +1358,7 @@
                         updateDebugInfo(`AI Segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
                     }
                     
-                    statusMessage += ' 🎯 Seed markers hidden for clear visualization.';
+                    statusMessage += ' � Seed points now colored by their segments!';
                     showStatus(statusMessage, 'success');
                     document.getElementById('downloadBtn').disabled = false;
                 } else {

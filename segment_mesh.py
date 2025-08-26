@@ -55,29 +55,10 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
 
     # Penalties
     curvature_penalty = np.exp(curvature_penalty_strength * angle)
-    spatial_penalty = 1 + (spatial_dist / avg_edge_length) ** 2
+    spatial_penalty = 1 + (spatial_dist / avg_edge_length)**2
 
-    weights = spatial_penalty * curvature_penalty
+    weights = spatial_penalty + curvature_penalty
 
-    # Apply user seed influence to weights if provided
-    if user_seeds is not None and len(user_seeds) > 0:
-        print(f"Applying user seed influence for {len(user_seeds)} seeds")
-        user_seed_set = set(user_seeds)
-        
-        # Create seed proximity bonus for edges involving seed faces
-        seed_bonus_factor = 0.5  # Reduce weights for edges involving seed faces
-        
-        # Check which edges connect to seed faces
-        face1_is_seed = np.isin(adj[:, 0], list(user_seed_set))
-        face2_is_seed = np.isin(adj[:, 1], list(user_seed_set))
-        
-        # Apply bonus to edges that connect to at least one seed face
-        seed_connected_edges = face1_is_seed | face2_is_seed
-        weights[seed_connected_edges] *= seed_bonus_factor
-        
-        print(f"Applied seed bonus to {np.sum(seed_connected_edges)} edges")
-
-    print("Final weights range:", np.min(weights), "to", np.max(weights))
 
     row = adj[:, 0]
     col = adj[:, 1]
@@ -176,12 +157,17 @@ def export_segment(mesh, face_labels, seed_idx, output_dir):
         seg_id = seed_to_seg[int(seed_face)]
         segments[seg_id].append(int(face_i))
 
-    # Export
+    # Export main segments
     for i, face_ids in enumerate(segments):
         if not face_ids:
             continue
         sub = mesh.submesh([np.asarray(face_ids, dtype=np.int64)], append=True)
         sub.export(os.path.join(output_dir, f"segment_{i}.obj"))
+    
+    # Export individual seed faces as separate segments
+    for i, seed_face_idx in enumerate(seed_idx):
+        seed_sub = mesh.submesh([np.asarray([seed_face_idx], dtype=np.int64)], append=True)
+        seed_sub.export(os.path.join(output_dir, f"seed_{i}.obj"))
 
 
 def main():
@@ -232,11 +218,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
