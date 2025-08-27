@@ -227,6 +227,159 @@ def load_mesh():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/segment_with_colored_seeds', methods=['POST'])
+def segment_with_colored_seeds():
+    """Perform segmentation using manually selected seed faces with colors, then combine segments by color."""
+    global current_mesh, current_sparse_matrix, current_face_centers
+    
+    try:
+        data = request.json
+        colored_seeds = data.get('colored_seeds', [])
+        output_dir = data.get('output_dir', 'output')
+        
+        if not colored_seeds:
+            return jsonify({'success': False, 'error': 'No seed points selected'})
+        
+        if current_mesh is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+        
+        # Convert clicked 3D points to face indices with color information
+        seed_face_data = []  # List of {face_idx, color}
+        face_centers = current_mesh.triangles_center
+        
+        # Calculate the same transformation that was applied in the frontend
+        vertices = current_mesh.vertices
+        min_coords = np.min(vertices, axis=0)
+        max_coords = np.max(vertices, axis=0)
+        center = (min_coords + max_coords) / 2
+        size = max_coords - min_coords
+        max_dim = np.max(size)
+        
+        display_scale = 4.0 / max_dim if max_dim > 0 else 1.0
+        display_center = -center
+        
+        print(f"Processing {len(colored_seeds)} colored seeds...")
+        
+        for seed_data in colored_seeds:
+            point = seed_data['position']
+            color = seed_data['color']
+            
+            # Transform clicked point back to original coordinate system
+            original_point = (np.array(point) - display_center) / display_scale
+            
+            # Find the closest face center to the original point
+            distances = np.linalg.norm(face_centers - original_point, axis=1)
+            closest_face_idx = np.argmin(distances)
+            
+            seed_face_data.append({
+                'face_idx': closest_face_idx,
+                'color': color
+            })
+            
+            print(f"Colored seed: {color} at point {point} -> face {closest_face_idx}")
+        
+        if not seed_face_data:
+            return jsonify({'success': False, 'error': 'No valid seed faces found'})
+        
+        # Extract face indices for segmentation
+        seed_face_indices = [seed['face_idx'] for seed in seed_face_data]
+        
+        # Rebuild graph with user seed information
+        print("Rebuilding graph with colored user seeds...")
+        current_sparse_matrix, current_face_centers = build_adjacency_graph(
+            current_mesh, current_curvature_penalty, user_seeds=seed_face_indices
+        )
+        
+        # Create seed indices array for the matrix
+        seed_idx = np.array(seed_face_indices)
+        
+        # Perform segmentation
+        face_labels = segment_mesh(current_sparse_matrix, seed_idx)
+        
+        # Now we need to combine segments that have the same color
+        print("Combining segments by color...")
+        
+        # Create color mapping for seeds
+        seed_color_map = {}  # face_idx -> color
+        for seed_data in seed_face_data:
+            seed_color_map[seed_data['face_idx']] = seed_data['color']
+        
+        # Group segments by color
+        color_groups = {}  # color -> list of segment faces
+        for face_idx, seed_face in face_labels.items():
+            seed_color = seed_color_map.get(seed_face, 'unknown')
+            if seed_color not in color_groups:
+                color_groups[seed_color] = []
+            color_groups[seed_color].append(face_idx)
+        
+        print(f"Created {len(color_groups)} color groups from {len(seed_idx)} original segments")
+        
+        # Export combined segments by color
+        export_combined_segments_by_color(current_mesh, color_groups, output_dir)
+        
+        # Create face colors for visualization - use the same color for all faces that belong to the same color group
+        color_palette = {
+            'red': [1.0, 0.0, 0.0],
+            'green': [0.0, 1.0, 0.0],
+            'blue': [0.0, 0.0, 1.0],
+            'yellow': [1.0, 1.0, 0.0],
+            'magenta': [1.0, 0.0, 1.0],
+            'cyan': [0.0, 1.0, 1.0],
+            'orange': [1.0, 0.5, 0.0],
+            'purple': [0.5, 0.0, 1.0]
+        }
+        
+        # Initialize all faces with default color
+        total_faces = len(current_mesh.faces)
+        face_colors = np.full((total_faces, 3), [0.7, 0.7, 0.7], dtype=np.float32)
+        
+        # Color faces by their final color group
+        for color, face_indices in color_groups.items():
+            if color in color_palette:
+                color_rgb = color_palette[color]
+                for face_idx in face_indices:
+                    face_colors[face_idx] = color_rgb
+        
+        # Convert to list format for JSON serialization
+        face_colors_list = face_colors.tolist()
+        
+        print(f"Colored segmentation completed: {len(seed_idx)} initial segments combined into {len(color_groups)} color groups")
+        
+        return jsonify({
+            'success': True,
+            'segments_created': len(seed_idx),
+            'combined_segments': len(color_groups),
+            'face_colors': face_colors_list,
+            'color_groups': list(color_groups.keys()),
+            'output_dir': output_dir,
+            'stats': {
+                'total_faces': total_faces,
+                'segmented_faces': len(face_labels),
+                'coverage_ratio': len(face_labels) / total_faces if total_faces > 0 else 0.0,
+                'color_groups': len(color_groups)
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in colored segmentation: {e}")
+        print("Full traceback:", traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)})
+
+
+def export_combined_segments_by_color(mesh, color_groups, output_dir):
+    """Export segments combined by color."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Export combined segments by color
+    for color, face_indices in color_groups.items():
+        if face_indices:  # Only export if there are faces
+            sub = mesh.submesh([np.asarray(face_indices, dtype=np.int64)], append=True)
+            filename = f"segment_{color}_combined.obj"
+            sub.export(os.path.join(output_dir, filename))
+            print(f"Exported {len(face_indices)} faces for color '{color}' to {filename}")
+
+
 @app.route('/segment_with_seeds', methods=['POST'])
 def segment_with_seeds():
     """Perform segmentation using manually selected seed faces."""

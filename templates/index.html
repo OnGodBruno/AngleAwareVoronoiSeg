@@ -441,6 +441,82 @@
         }
         
         /* Toggle switch for seed mode */
+        
+        /* Color selector styles */
+        .color-selector {
+            margin-bottom: 16px;
+        }
+        
+        .color-options {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+        }
+        
+        .color-option {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .color-option:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .color-option.active {
+            border: 3px solid var(--primary-color);
+            transform: scale(1.15);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+        }
+        
+        .color-option.active::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
+            font-size: 12px;
+        }
+        
+        .seed-list .seed-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        
+        .seed-color-indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        
+        .seed-info {
+            flex: 1;
+            margin-left: 8px;
+        }
+        
     </style>
 </head>
 <body>
@@ -455,10 +531,11 @@
                 <strong><i class="fas fa-info-circle"></i> Quick Start Guide</strong>
                 1. Upload or load a mesh file (.obj, .glb, .gltf)<br>
                 2. Adjust curvature penalty strength if needed<br>
-                3. Click on the 3D model to select seed points<br>
-                4. Run segmentation - seed points will be colored by their segments<br>
-                5. Use "Toggle Seeds" to show/hide seed points<br>
-                6. Download your segmented results
+                3. Select a seed color from the palette<br>
+                4. Click on the 3D model to place seeds of that color<br>
+                5. Change colors and add more seeds as needed<br>
+                6. Run segmentation - seeds with the same color will be combined<br>
+                7. Download your segmented results
             </div>
             
             <div class="control-section">
@@ -509,6 +586,26 @@
                 <div class="seed-counter">
                     <i class="fas fa-crosshairs"></i>
                     <span>Selected Seeds: <strong id="seedCount">0</strong></span>
+                </div>
+                
+                <div class="control-group">
+                    <label><i class="fas fa-palette"></i> Current Seed Color</label>
+                    <div class="color-selector">
+                        <div class="color-options">
+                            <div class="color-option active" data-color="red" style="background-color: #ff0000;" onclick="selectSeedColor('red', this)"></div>
+                            <div class="color-option" data-color="green" style="background-color: #00ff00;" onclick="selectSeedColor('green', this)"></div>
+                            <div class="color-option" data-color="blue" style="background-color: #0000ff;" onclick="selectSeedColor('blue', this)"></div>
+                            <div class="color-option" data-color="yellow" style="background-color: #ffff00;" onclick="selectSeedColor('yellow', this)"></div>
+                            <div class="color-option" data-color="magenta" style="background-color: #ff00ff;" onclick="selectSeedColor('magenta', this)"></div>
+                            <div class="color-option" data-color="cyan" style="background-color: #00ffff;" onclick="selectSeedColor('cyan', this)"></div>
+                            <div class="color-option" data-color="orange" style="background-color: #ff8000;" onclick="selectSeedColor('orange', this)"></div>
+                            <div class="color-option" data-color="purple" style="background-color: #8000ff;" onclick="selectSeedColor('purple', this)"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="seed-list" id="seedList">
+                    <div style="text-align: center; color: var(--text-muted); font-style: italic;">No seeds selected</div>
                 </div>
                 
                 <div class="btn-group">
@@ -590,6 +687,19 @@
         let mouseDown = false;
         let renderErrorCount = 0;
         let maxRenderErrors = 10;
+        let currentSeedColor = 'red'; // Default seed color
+        
+        // Color mapping for seeds
+        const seedColors = {
+            'red': [1.0, 0.0, 0.0],
+            'green': [0.0, 1.0, 0.0],
+            'blue': [0.0, 0.0, 1.0],
+            'yellow': [1.0, 1.0, 0.0],
+            'magenta': [1.0, 0.0, 1.0],
+            'cyan': [0.0, 1.0, 1.0],
+            'orange': [1.0, 0.5, 0.0],
+            'purple': [0.5, 0.0, 1.0]
+        };
         
         // Simple orbit controls implementation
         class SimpleOrbitControls {
@@ -785,6 +895,18 @@
             if (renderErrorCount < maxRenderErrors) {
                 requestAnimationFrame(animate);
             }
+        }
+        
+        function selectSeedColor(color, element) {
+            currentSeedColor = color;
+            
+            // Update UI to show active color
+            document.querySelectorAll('.color-option').forEach(option => {
+                option.classList.remove('active');
+            });
+            element.classList.add('active');
+            
+            showStatus(`Selected ${color} color for new seeds`, 'info');
         }
         
         function onWindowResize() {
@@ -1210,24 +1332,34 @@
         }
         
         function addSeed(x, y, z) {
-            selectedSeeds.push([x, y, z]);
+            const seedData = {
+                position: [x, y, z],
+                color: currentSeedColor,
+                colorRGB: seedColors[currentSeedColor]
+            };
+            selectedSeeds.push(seedData);
             updateSeedDisplay();
             
-            // Add visual marker with default color (will be colored later during segmentation)
+            // Add visual marker with the selected color
             const geometry = new THREE.SphereGeometry(0.04, 16, 16);
+            const colorRGB = seedColors[currentSeedColor];
             const material = new THREE.MeshLambertMaterial({ 
-                color: 0xff0000,
+                color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
                 opacity: 0.9,
                 transparent: true,
-                emissive: 0x330000,
-                emissiveIntensity: 0.1
+                emissive: new THREE.Color(colorRGB[0] * 0.2, colorRGB[1] * 0.2, colorRGB[2] * 0.2),
+                emissiveIntensity: 0.3
             });
             const marker = new THREE.Mesh(geometry, material);
             marker.position.set(x, y, z);
-            marker.userData = { isSeedMarker: true, seedIndex: selectedSeeds.length - 1 };
+            marker.userData = { 
+                isSeedMarker: true, 
+                seedIndex: selectedSeeds.length - 1,
+                seedColor: currentSeedColor
+            };
             scene.add(marker);
             
-            showStatus(`Seed ${selectedSeeds.length} added at (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`, 'success');
+            showStatus(`${currentSeedColor.charAt(0).toUpperCase() + currentSeedColor.slice(1)} seed ${selectedSeeds.length} added at (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`, 'success');
         }
         
         function toggleSeedMarkers() {
@@ -1307,13 +1439,40 @@
         function updateSeedDisplay() {
             const seedCount = document.getElementById('seedCount');
             const segmentBtn = document.getElementById('segmentBtn');
+            const seedList = document.getElementById('seedList');
             
             seedCount.textContent = selectedSeeds.length;
             
             if (selectedSeeds.length === 0) {
                 segmentBtn.disabled = true;
+                seedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); font-style: italic;">No seeds selected</div>';
             } else {
                 segmentBtn.disabled = false;
+                
+                // Group seeds by color for display
+                const seedsByColor = {};
+                selectedSeeds.forEach((seed, index) => {
+                    if (!seedsByColor[seed.color]) {
+                        seedsByColor[seed.color] = [];
+                    }
+                    seedsByColor[seed.color].push({ seed, index });
+                });
+                
+                let html = '';
+                Object.keys(seedsByColor).forEach(color => {
+                    const colorSeeds = seedsByColor[color];
+                    const colorRGB = seedColors[color];
+                    const colorStyle = `rgb(${Math.round(colorRGB[0] * 255)}, ${Math.round(colorRGB[1] * 255)}, ${Math.round(colorRGB[2] * 255)})`;
+                    
+                    html += `<div class="seed-item">
+                        <div class="seed-color-indicator" style="background-color: ${colorStyle};"></div>
+                        <div class="seed-info">
+                            <strong>${color.charAt(0).toUpperCase() + color.slice(1)}</strong>: ${colorSeeds.length} seed${colorSeeds.length > 1 ? 's' : ''}
+                        </div>
+                    </div>`;
+                });
+                
+                seedList.innerHTML = html;
             }
         }
         
@@ -1327,17 +1486,23 @@
                 showLoading(false);
                 return;
             } else {
-                showStatus('Processing mesh segmentation...', 'info');
+                showStatus('Processing mesh segmentation with colored seeds...', 'info');
             }
             
             try {
-                const response = await fetch('/segment_with_seeds', {
+                // Prepare seed data with colors
+                const seedData = selectedSeeds.map(seed => ({
+                    position: seed.position,
+                    color: seed.color
+                }));
+                
+                const response = await fetch('/segment_with_colored_seeds', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        clicked_points: selectedSeeds,
+                        colored_seeds: seedData,
                         output_dir: document.getElementById('outputDir').value
                     })
                 });
@@ -1345,20 +1510,19 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    // Update seed colors and keep them visible
-                    if (result.seed_colors) {
-                        updateSeedColors(result.seed_colors);
-                    }
-                    
                     displaySegmentedMesh(result.face_colors);
-                    let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created.`;
+                    let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created`;
+                    if (result.combined_segments) {
+                        statusMessage += ` and combined into ${result.combined_segments} groups by color`;
+                    }
+                    statusMessage += '.';
+                    
                     if (result.stats) {
                         const stats = result.stats;
                         statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
-                        updateDebugInfo(`AI Segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
+                        updateDebugInfo(`Segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
                     }
                     
-                    statusMessage += ' � Seed points now colored by their segments!';
                     showStatus(statusMessage, 'success');
                     document.getElementById('downloadBtn').disabled = false;
                 } else {
