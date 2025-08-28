@@ -59,7 +59,6 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
 
     weights = spatial_penalty + curvature_penalty
 
-
     row = adj[:, 0]
     col = adj[:, 1]
     all_row = np.concatenate([row, col])
@@ -102,7 +101,7 @@ def select_seeds(face_centers, n_seeds):
         Returns:
             seed_idx: array of matrix row indices [0, m-1], with length equal to n_seeds.
         """
-    rng = np.random.default_rng(40)  # 42 is for debugging needs to be removed in final version
+    rng = np.random.default_rng(42)  # 42 is for debugging needs to be removed in final version
     n_faces = face_centers.shape[0]
 
     seed_idx = [pick_first_seed(face_centers)]
