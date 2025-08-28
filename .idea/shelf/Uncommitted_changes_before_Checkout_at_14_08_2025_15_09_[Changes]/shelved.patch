@@ -1,0 +1,160 @@
+Index: segment_mesh.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Author: Bruno Zoller\r\n# Institution: University of Stuttgart\r\n\r\nimport trimesh\r\nimport numpy as np\r\nfrom scipy.sparse import csgraph\r\nimport scipy.sparse as sparse\r\nimport os\r\nimport argparse\r\nfrom skimage.color import rgb2lab  # For LAB color space conversion\r\n\r\nfrom PIL import Image  # For loading external texture images\r\nimport time  # Debug\r\n\r\n\r\ndef load_and_clean_mesh(mesh_path, texture_path=None):\r\n    \"\"\"\r\n    Load and clean a 3D mesh.\r\n\r\n    If 'texture_path' is provided and exists:\r\n      - load the mesh without extra processing (process=False),\r\n      - load the texture and attach it as a SimpleMaterial using the existing UVs.\r\n    Otherwise:\r\n      - load normally (process=True).\r\n\r\n    Note: Even without 'texture_path', a texture might still be used if trimesh\r\n    already picked up a material.image while loading (e.g., via an MTL).\r\n    \"\"\"\r\n    if texture_path and os.path.exists(texture_path):\r\n        mesh = trimesh.load(mesh_path, process=False)\r\n        try:\r\n            texture_image = Image.open(texture_path)\r\n            material = trimesh.visual.material.SimpleMaterial(image=texture_image)\r\n\r\n            if hasattr(mesh.visual, \"uv\") and mesh.visual.uv is not None:\r\n                mesh.visual = trimesh.visual.TextureVisuals(\r\n                    uv=mesh.visual.uv,\r\n                    material=material\r\n                )\r\n        except Exception as e:\r\n            print(f\"[Warning] Could not load/assign texture: {e}\")\r\n    else:\r\n        mesh = trimesh.load(mesh_path, process=True)\r\n\r\n    # Cleanup\r\n    mesh.merge_vertices()\r\n    mesh.remove_unreferenced_vertices()\r\n    mesh.remove_infinite_values()\r\n    return mesh\r\n\r\n\r\ndef extract_face_colors(mesh):\r\n    \"\"\"\r\n    Return per-face colors in LAB color space with shape (n_faces, 3),\r\n    or None if no usable colors are available.\r\n\r\n    Priority:\r\n    1) Vertex colors → averaged per face.\r\n    2) UV + material.image → sample the texture at the UV-center of each face.\r\n    \"\"\"\r\n    # 1) Vertex colors available?\r\n    if getattr(mesh.visual, \"vertex_colors\", None) is not None and mesh.visual.vertex_colors.size:\r\n        v_rgb = mesh.visual.vertex_colors[:, :3].astype(np.float32) / 255.0\r\n\r\n        if np.allclose(v_rgb, v_rgb[0], rtol=1e-3):\r\n            return None\r\n\r\n        face_rgb = v_rgb[mesh.faces].mean(axis=1)\r\n\r\n    # 2) UV + texture image available?\r\n    elif (hasattr(mesh.visual, \"uv\") and mesh.visual.uv is not None and\r\n          hasattr(mesh.visual, \"material\") and hasattr(mesh.visual.material, \"image\") and\r\n          mesh.visual.material.image is not None):\r\n        tex = np.asarray(mesh.visual.material.image.convert(\"RGB\"), dtype=np.float32) / 255.0\r\n        h, w, _ = tex.shape\r\n\r\n        face_uvs = mesh.visual.uv[mesh.faces]  # (n_faces, 3, 2)\r\n        uv_centers = face_uvs.mean(axis=1)  # (n_faces, 2)\r\n\r\n        # UV → pixel indices (invert y-axis)\r\n        px = (uv_centers[:, 0] * (w - 1)).astype(int).clip(0, w - 1)\r\n        py = ((1 - uv_centers[:, 1]) * (h - 1)).astype(int).clip(0, h - 1)\r\n        face_rgb = tex[py, px]\r\n    else:\r\n        return None\r\n\r\n    # RGB → LAB\r\n    face_lab = rgb2lab(face_rgb.reshape(-1, 1, 3)).reshape(-1, 3)\r\n    return face_lab\r\n\r\n\r\ndef build_adjacency_graph(mesh,\r\n                          curvature_penalty_strength,\r\n                          max_normal_angle=np.radians(20),\r\n                          texture_strength=10.0):\r\n    \"\"\"\r\n    Build a face adjacency graph with curvature- and texture-aware edge weights.\r\n\r\n    Returns:\r\n      sparse_matrix : csr_matrix, shape (m, m)\r\n          Weighted adjacency over active faces (faces that appear in adjacency).\r\n      face_coords : (m, 3) array\r\n          Face centroids for rows of 'sparse_matrix'.\r\n      active_faces : (m,) array\r\n          Mapping from matrix row index → original face index.\r\n    \"\"\"\r\n\r\n    face_centers = mesh.triangles_center\r\n    face_normals = mesh.face_normals\r\n    edge_lengths = mesh.edges_unique_length\r\n    adj = mesh.face_adjacency\r\n\r\n    avg_edge_length = np.mean(edge_lengths) if edge_lengths.size else 1.0\r\n\r\n    # Geometry terms\r\n    p1 = face_centers[adj[:, 0]]\r\n    p2 = face_centers[adj[:, 1]]\r\n    n1 = face_normals[adj[:, 0]]\r\n    n2 = face_normals[adj[:, 1]]\r\n\r\n    spatial_dist = np.linalg.norm(p1 - p2, axis=1)\r\n    angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1.0, 1.0))\r\n\r\n    mask = angle <= max_normal_angle\r\n\r\n    curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])\r\n    spatial_penalty = 1.0 + (spatial_dist[mask] / avg_edge_length) ** 2\r\n\r\n    face_lab = extract_face_colors(mesh)\r\n    if face_lab is not None and texture_strength is not None and texture_strength > 0.0:\r\n        lab1 = face_lab[adj[mask, 0]]\r\n        lab2 = face_lab[adj[mask, 1]]\r\n        deltaE_norm = np.linalg.norm(lab1 - lab2, axis=1) / 100.0\r\n        texture_penalty = np.exp(texture_strength * deltaE_norm)\r\n    else:\r\n        texture_penalty = 1.0\r\n\r\n    weights = spatial_penalty * curvature_penalty * texture_penalty\r\n\r\n    adj_valid = adj[mask]\r\n\r\n    active_faces = np.unique(adj_valid.flatten())\r\n    face_coords = face_centers[active_faces]\r\n\r\n    row = np.searchsorted(active_faces, adj_valid[:, 0])\r\n    col = np.searchsorted(active_faces, adj_valid[:, 1])\r\n    all_row = np.concatenate([row, col])\r\n    all_col = np.concatenate([col, row])\r\n    all_weights = np.concatenate([weights, weights]).astype(np.float64)\r\n\r\n    sparse_matrix = sparse.csr_matrix(\r\n        (all_weights, (all_row, all_col)),\r\n        shape=(len(active_faces),) * 2, dtype=np.float64\r\n    )\r\n\r\n    print(\"Graph built\")\r\n    return sparse_matrix, face_coords, active_faces\r\n\r\n\r\ndef pick_first_seed(face_coords, pool_size=64):\r\n    \"\"\"\r\n    Randomly sample a pool of faces and select the one with the largest\r\n    average distance to the others in the pool.\r\n    \"\"\"\r\n    rng = np.random.default_rng(42)\r\n    n_faces = face_coords.shape[0]\r\n\r\n    pool = rng.choice(n_faces, size=min(pool_size, n_faces), replace=False)\r\n    sub = face_coords[pool]\r\n    dist = np.linalg.norm(sub[:, None] - sub[None], axis=2)\r\n\r\n    return pool[np.argmax(dist.sum(axis=1))]\r\n\r\n\r\ndef select_seeds(face_coords, n_seeds):\r\n    \"\"\"\r\n    Farthest-point sampling for seed selection (no component logic).\r\n    \"\"\"\r\n    rng = np.random.default_rng(42)\r\n    n_faces = face_coords.shape[0]\r\n    n_seeds = min(n_seeds, n_faces)\r\n\r\n    seed_idx = [pick_first_seed(face_coords)]\r\n    d_min = np.linalg.norm(face_coords - face_coords[seed_idx[0]], axis=1)\r\n\r\n    for _ in range(1, n_seeds):\r\n        probs = d_min / d_min.sum()\r\n        new_seed = rng.choice(n_faces, p=probs)\r\n        seed_idx.append(new_seed)\r\n\r\n        d_new = np.linalg.norm(face_coords - face_coords[new_seed], axis=1)\r\n        d_min = np.minimum(d_min, d_new)\r\n\r\n    print(\"seeds selected\")  # DEBUG\r\n    return np.array(seed_idx)\r\n\r\n\r\ndef segment_mesh(sparse_matrix, seed_idx):\r\n    \"\"\"\r\n    Segment a mesh by multi-source geodesic propagation on its adjacency matrix.\r\n\r\n    Returns:\r\n      face_labels : dict\r\n          Mapping {row_face_i: row_seed_j}, where both keys and values are row indices\r\n          into 'sparse_matrix'. Each face_i is assigned to the seed_j with the shortest\r\n          geodesic (edge-weight) distance. Faces unreachable from any seed (inf distance)\r\n          are omitted.\r\n\r\n    Note:\r\n      Ties are broken by adding a tiny epsilon offset per seed, favoring earlier seeds.\r\n    \"\"\"\r\n    dist = csgraph.dijkstra(sparse_matrix, indices=seed_idx,\r\n                            directed=False, return_predecessors=False)\r\n\r\n    # Tie-break: tiny epsilons per seed\r\n    eps = np.linspace(0.0, 1e-9, len(seed_idx), endpoint=False)[:, None]\r\n    winner = (dist + eps).argmin(axis=0)\r\n\r\n    face_labels = {i: seed_idx[winner[i]]\r\n                   for i in range(sparse_matrix.shape[0])\r\n                   if np.isfinite(dist[winner[i], i])}\r\n\r\n    print(\"mesh segmented\")  # DEBUG\r\n    return face_labels\r\n\r\n\r\ndef export_segments(mesh, face_labels, seed_idx, active_faces, output_dir):\r\n    \"\"\"\r\n    Export each segment as a submesh OBJ file named 'segment_<i>.obj'.\r\n    \"\"\"\r\n    os.makedirs(output_dir, exist_ok=True)\r\n    row_to_segment = {row: i for i, row in enumerate(seed_idx)}\r\n    segments = [[] for _ in range(len(seed_idx))]\r\n\r\n    for row_idx, seed_row in face_labels.items():\r\n        seg_id = row_to_segment[seed_row]\r\n        face_id = active_faces[row_idx]\r\n        segments[seg_id].append(face_id)\r\n\r\n    for i, face_ids in enumerate(segments):\r\n        if face_ids:\r\n            mesh.submesh([face_ids], append=True) \\\r\n                .export(os.path.join(output_dir, f\"segment_{i}.obj\"))\r\n\r\n\r\ndef main():\r\n    parser = argparse.ArgumentParser(description=\"3D Mesh Segmentation\")\r\n    parser.add_argument(\r\n        \"--mesh_path\",\r\n        type=str,\r\n        default=r\"input\\run\\example.obj\",\r\n        help=\"Path to mesh file (default: input\\\\run\\\\example.obj)\",\r\n    )\r\n    parser.add_argument(\"--texture_path\", type=str,\r\n                        help=\"Optional path to texture image (PNG/JPG) if OBJ uses UVs\")\r\n    parser.add_argument(\"--texture_strength\", type=float, default=10.0,\r\n                        help=\"Texture difference penalty strength (ΔE scaling)\")\r\n    parser.add_argument(\r\n        \"--output_dir\",\r\n        type=str,\r\n        default=\"output\",\r\n        help=\"Path to output directory (default: output)\",\r\n    )\r\n    parser.add_argument(\"--n_seeds\", type=int, default=10, help=\"Number of segments\")\r\n    parser.add_argument(\r\n        \"--curvature_penalty_strength\",\r\n        type=float,\r\n        default=100.0,\r\n        help=\"Angle punishment strength\",\r\n    )\r\n    parser.add_argument(\r\n        \"--seed_idx\",\r\n        type=int,\r\n        nargs=\"*\",\r\n        help=\"Manual seed face indices (optional)\",\r\n    )\r\n\r\n    args = parser.parse_args()\r\n\r\n    t0 = time.perf_counter()  # DEBUG\r\n\r\n    print(\"Segmentation Started\")\r\n\r\n    mesh = load_and_clean_mesh(args.mesh_path, args.texture_path)\r\n    print(\"Faces:\", len(mesh.faces))\r\n\r\n    sparse_matrix, face_coords, active_faces = build_adjacency_graph(\r\n        mesh,\r\n        curvature_penalty_strength=args.curvature_penalty_strength,\r\n        max_normal_angle=np.radians(20),\r\n        texture_strength=args.texture_strength\r\n    )\r\n\r\n    if args.seed_idx is None:\r\n        seed_idx = select_seeds(face_coords, args.n_seeds)\r\n    else:\r\n        seed_idx = np.array(args.seed_idx, dtype=int)\r\n\r\n    print(f\"Using seed face indices: {seed_idx}\")\r\n    face_labels = segment_mesh(sparse_matrix, seed_idx)\r\n\r\n    export_segments(mesh, face_labels, seed_idx, active_faces, args.output_dir)\r\n    print(\"Segmentation complete.\")\r\n\r\n    print(\"Elapsed:\", time.perf_counter() - t0)  # DEBUG\r\n\r\n\r\nif __name__ == \"__main__\":\r\n    main()\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/segment_mesh.py b/segment_mesh.py
+--- a/segment_mesh.py	(revision bb58268f170a816d7b0afb6add9e2bf30402af0a)
++++ b/segment_mesh.py	(date 1754253203377)
+@@ -15,23 +15,60 @@
+ 
+ def load_and_clean_mesh(mesh_path, texture_path=None):
+     """
+-    Load and clean a 3D mesh.
++    Load and clean a 3D mesh with proper vertex color handling.
++    """
++    import re
+ 
+-    If 'texture_path' is provided and exists:
+-      - load the mesh without extra processing (process=False),
+-      - load the texture and attach it as a SimpleMaterial using the existing UVs.
+-    Otherwise:
+-      - load normally (process=True).
++    print("Loading OBJ with vertex colors...")
+ 
+-    Note: Even without 'texture_path', a texture might still be used if trimesh
+-    already picked up a material.image while loading (e.g., via an MTL).
+-    """
++    # Manually parse OBJ to get vertex colors
++    vertices = []
++    vertex_colors = []
++    faces = []
++
++    with open(mesh_path, 'r') as f:
++        for line in f:
++            if line.startswith('v '):
++                # Parse vertex with color: v x y z r g b
++                parts = line.strip().split()
++                if len(parts) == 7:  # Has colors
++                    vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
++                    vertex_colors.append([float(parts[4]), float(parts[5]), float(parts[6])])
++                elif len(parts) == 4:  # No colors
++                    vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
++                    vertex_colors.append([0.5, 0.5, 0.5])  # Default gray
++            elif line.startswith('f '):
++                # Parse face
++                parts = line.strip().split()[1:]
++                # Handle faces with slashes (f 1/1/1 2/2/2 3/3/3)
++                face = []
++                for part in parts:
++                    face.append(int(part.split('/')[0]) - 1)  # OBJ indices start at 1
++                if len(face) == 3:
++                    faces.append(face)
++
++    vertices = np.array(vertices)
++    faces = np.array(faces)
++    vertex_colors = np.array(vertex_colors)
++
++    print(f"Parsed {len(vertices)} vertices with colors")
++    print(f"Color range: min={vertex_colors.min():.3f}, max={vertex_colors.max():.3f}")
++
++    # Create mesh
++    mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
++
++    # Add vertex colors (convert to RGBA uint8)
++    vertex_colors_rgba = np.column_stack([
++        (vertex_colors * 255).astype(np.uint8),
++        np.ones(len(vertices), dtype=np.uint8) * 255
++    ])
++    mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=vertex_colors_rgba)
++
++    # Apply external texture if provided (will override vertex colors)
+     if texture_path and os.path.exists(texture_path):
+-        mesh = trimesh.load(mesh_path, process=False)
+         try:
+             texture_image = Image.open(texture_path)
+             material = trimesh.visual.material.SimpleMaterial(image=texture_image)
+-
+             if hasattr(mesh.visual, "uv") and mesh.visual.uv is not None:
+                 mesh.visual = trimesh.visual.TextureVisuals(
+                     uv=mesh.visual.uv,
+@@ -39,13 +76,21 @@
+                 )
+         except Exception as e:
+             print(f"[Warning] Could not load/assign texture: {e}")
+-    else:
+-        mesh = trimesh.load(mesh_path, process=True)
++
++    # Debug info
++    print(f"\n--- Mesh info ---")
++    print(f"Vertices: {len(mesh.vertices)}")
++    print(f"Faces: {len(mesh.faces)}")
++    print(f"Unique colors: {len(np.unique(vertex_colors, axis=0))}")
+ 
+     # Cleanup
+     mesh.merge_vertices()
+     mesh.remove_unreferenced_vertices()
+     mesh.remove_infinite_values()
++
++    print(f"After cleanup: {len(mesh.faces)} faces, {len(mesh.vertices)} vertices")
++    print(f"Face adjacency: {len(mesh.face_adjacency)} pairs")
++
+     return mesh
+ 
+ 
+@@ -58,19 +103,23 @@
+     1) Vertex colors → averaged per face.
+     2) UV + material.image → sample the texture at the UV-center of each face.
+     """
++    print("\n--- DEBUG extract_face_colors ---")
+     # 1) Vertex colors available?
+     if getattr(mesh.visual, "vertex_colors", None) is not None and mesh.visual.vertex_colors.size:
+         v_rgb = mesh.visual.vertex_colors[:, :3].astype(np.float32) / 255.0
+ 
+         if np.allclose(v_rgb, v_rgb[0], rtol=1e-3):
++            print("BUT: All vertex colors are the same! Returning None")
+             return None
+ 
++        print("Vertex colors are varied! Using them.")
+         face_rgb = v_rgb[mesh.faces].mean(axis=1)
+ 
+     # 2) UV + texture image available?
+     elif (hasattr(mesh.visual, "uv") and mesh.visual.uv is not None and
+           hasattr(mesh.visual, "material") and hasattr(mesh.visual.material, "image") and
+           mesh.visual.material.image is not None):
++        print("Found UV texture!")
+         tex = np.asarray(mesh.visual.material.image.convert("RGB"), dtype=np.float32) / 255.0
+         h, w, _ = tex.shape
+ 
+@@ -82,10 +131,12 @@
+         py = ((1 - uv_centers[:, 1]) * (h - 1)).astype(int).clip(0, h - 1)
+         face_rgb = tex[py, px]
+     else:
++        print("NO colors found - no vertex colors, no texture")
+         return None
+ 
+     # RGB → LAB
+     face_lab = rgb2lab(face_rgb.reshape(-1, 1, 3)).reshape(-1, 3)
++    print(f"Returning LAB colors with shape: {face_lab.shape}")
+     return face_lab
+ 
+ 
+@@ -101,7 +152,7 @@
+           Weighted adjacency over active faces (faces that appear in adjacency).
+       face_coords : (m, 3) array
+           Face centroids for rows of 'sparse_matrix'.
+-      active_faces : (m,) array
++      active_faces : (m,3) array
+           Mapping from matrix row index → original face index.
+     """
+ 
+@@ -128,6 +179,7 @@
+ 
+     face_lab = extract_face_colors(mesh)
+     if face_lab is not None and texture_strength is not None and texture_strength > 0.0:
++        print("Using texture penalty!")  # DEBUG
+         lab1 = face_lab[adj[mask, 0]]
+         lab2 = face_lab[adj[mask, 1]]
+         deltaE_norm = np.linalg.norm(lab1 - lab2, axis=1) / 100.0

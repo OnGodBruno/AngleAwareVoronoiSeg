@@ -1,0 +1,126 @@
+Index: segment_mesh.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>\r\n\r\nimport trimesh\r\nimport numpy as np\r\nfrom scipy.sparse import csgraph\r\nimport scipy.sparse as sparse\r\nimport os\r\nimport argparse\r\n\r\nimport time # Debug\r\n\r\n\r\ndef load_and_clean_mesh(mesh_path):\r\n    \"\"\"\r\n    Load and clean a 3D mesh.\r\n    \"\"\"\r\n    mesh = trimesh.load(mesh_path, process=True)\r\n    mesh.remove_unreferenced_vertices()\r\n    mesh.remove_infinite_values()\r\n    return mesh\r\n\r\n\r\ndef build_adjacency_graph(mesh, curvature_penalty_strength, max_normal_angle=np.radians(20)):\r\n    \"\"\"\r\n    Build a face adjacency graph with curvature-aware edge weights.\r\n    Returns:\r\n         sparse_matrix : scipy.sparse.csr_matrix, shape (m, m)\r\n        Weighted adjacency matrix of the filtered face graph. m is the number of faces\r\n        that remain after filtering. Entry (i, j) contains the weight between face i and j,\r\n        combining spatial distance and curvature penalty.\r\n    face_coords : numpy.ndarray, shape (m, 3)\r\n        Array of 3D centroids corresponding to the faces in the graph. Row index i of\r\n        `sparse_matrix` maps directly to `face_coords[i]`.\r\n    \"\"\"\r\n\r\n    face_centers = mesh.triangles_center\r\n    face_normals = mesh.face_normals\r\n    adj = mesh.face_adjacency\r\n    edge_lengths = mesh.edges_unique_length\r\n    avg_edge_length = np.mean(edge_lengths) if edge_lengths.size else 1.0\r\n\r\n    p1 = face_centers[adj[:, 0]]\r\n    p2 = face_centers[adj[:, 1]]\r\n    n1 = face_normals[adj[:, 0]]\r\n    n2 = face_normals[adj[:, 1]]\r\n\r\n    spatial_dist = np.linalg.norm(p1 - p2, axis=1)\r\n    angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1.0, 1.0))\r\n\r\n    mask = angle <= max_normal_angle\r\n\r\n    curvature_penalty = np.exp(curvature_penalty_strength * angle[mask])\r\n    spatial_penalty = 1.0 + (spatial_dist[mask] / avg_edge_length) ** 2\r\n    weights = (spatial_penalty * curvature_penalty).astype(np.float64)\r\n\r\n    rows = adj[mask][:, 0]\r\n    cols = adj[mask][:, 1]\r\n    n_faces = len(mesh.faces)\r\n\r\n    all_row = np.concatenate([rows, cols])\r\n    all_col = np.concatenate([cols, rows])\r\n    all_weights = np.concatenate([weights, weights])\r\n\r\n    sparse_matrix = sparse.csr_matrix(\r\n        (all_weights, (all_row, all_col)),\r\n        shape=(n_faces, n_faces),\r\n        dtype=np.float64\r\n    )\r\n\r\n    face_coords = face_centers\r\n    active_faces = np.arange(n_faces, dtype=int)\r\n\r\n    deg = np.diff(sparse_matrix.indptr)\r\n    allowed = deg > 0\r\n    allowed_idx = np.flatnonzero(allowed)\r\n    if allowed_idx.size == 0:\r\n        allowed_idx = np.arange(n_faces, dtype=int)\r\n\r\n    return sparse_matrix, face_coords, active_faces, allowed_idx\r\n\r\ndef pick_first_seed(face_coords, allowed_idx, rng, pool_size=64):\r\n    \"\"\"\r\n    Picks a pool of faces at random, selects the one with the greatest average distance from the pool.\r\n\r\n    Args:\r\n        face_coords: numpy.ndarray, shape (m, 3)\r\n        pool_size: int, number of faces in the pool\r\n    \"\"\"\r\n    if rng is None:\r\n        rng = np.random.default_rng()\r\n\r\n    k = min(pool_size, allowed_idx.size)\r\n    pool = rng.choice(allowed_idx, size=k, replace=False)\r\n    sub = face_coords[pool]\r\n    dist = np.linalg.norm(sub[:, None] - sub[None], axis=2)\r\n    return pool[np.argmax(dist.sum(axis=1))]\r\n\r\n\r\ndef select_seeds(face_coords, n_seeds, allowed_idx):\r\n    \"\"\"\r\n    Select seed faces using farthest-point sampling.\r\n    Args:\r\n        face_coords: (m×3) array of 3D coordinates for active faces\r\n        n_seeds: number of seeds to select\r\n\r\n    Returns:\r\n        seed_idx: array of matrix row indices [0, m-1]\r\n    \"\"\"\r\n    rng = np.random.default_rng()\r\n\r\n    seed_idx = [pick_first_seed(face_coords, allowed_idx, rng)]\r\n    if n_seeds == 1:\r\n        return np.array(seed_idx, dtype=int)\r\n\r\n    coords_allowed = face_coords[allowed_idx]\r\n    d_min = np.linalg.norm(coords_allowed - face_coords[seed_idx[0]], axis=1)\r\n\r\n    for _ in range(1, n_seeds):\r\n        s = d_min.sum()\r\n        if not np.isfinite(s) or s <= 0:\r\n            new_seed = rng.choice(allowed_idx)\r\n        else:\r\n            probs = d_min / s\r\n            new_seed = rng.choice(allowed_idx, p=probs)\r\n        seed_idx.append(int(new_seed))\r\n        d_new = np.linalg.norm(coords_allowed - face_coords[int(new_seed)], axis=1)\r\n        d_min = np.minimum(d_min, d_new)\r\n\r\n    return np.array(seed_idx, dtype=int)\r\n\r\n\r\ndef segment_mesh(sparse_matrix, seed_idx, adj):\r\n    \"\"\"\r\n    Segment a mesh by multi‑source geodesic propagation on its adjacency matrix.\r\n\r\n    Returns:\r\n         face_labels : dict\r\n        Mapping `{face_i: seed_j}` where both keys and values are row indices into\r\n        `sparse_matrix`. Each face_i is assigned the seed_j to which it has the\r\n        shortest geodesic (edge‑weight) distance. Faces unreachable from any seed\r\n        (distance = inf) are omitted.\r\n\r\n    Note:\r\n        Ties in distance are broken by adding a small epsilon offset to each seed’s\r\n      distance array, favoring seeds with lower index in `seed_idx`.\r\n    \"\"\"\r\n\r\n    dist = csgraph.dijkstra(sparse_matrix,\r\n                            indices=seed_idx,\r\n                            directed=False,\r\n                            return_predecessors=False)\r\n    eps = np.linspace(0.0, 1e-9, len(seed_idx), endpoint=False)[:, None]\r\n    winner = (dist + eps).argmin(axis=0)\r\n    n_faces = sparse_matrix.shape[0]\r\n\r\n    labels = np.full(n_faces, -1, dtype=int)\r\n    finite = np.isfinite(dist[winner, np.arange(n_faces)])\r\n    labels[finite] = seed_idx[winner[finite]]\r\n\r\n    removed_faces = np.flatnonzero(labels == -1)\r\n    if removed_faces.size:\r\n        mapping = assign_removed_faces(removed_faces, labels, adj, seed_idx)\r\n        for f, s in mapping.items():\r\n            labels[f] = s\r\n\r\n    return {i: labels[i] for i in range(n_faces)}\r\n\r\ndef assign_removed_faces(removed_faces, labels, adj, seed_idx):\r\n    n_faces = labels.shape[0]\r\n    neigh = [[] for _ in range(n_faces)]\r\n    for a, b in adj:\r\n        neigh[a].append(b)\r\n        neigh[b].append(a)\r\n\r\n    parent = np.arange(n_faces, dtype=int)\r\n\r\n    def find(u):\r\n        while parent[u] != u:\r\n            parent[u] = parent[parent[u]]\r\n            u = parent[u]\r\n        return u\r\n\r\n    for a, b in adj:\r\n        if labels[a] == -1 and labels[b] == -1:\r\n            ra, rb = find(a), find(b)\r\n            if ra != rb:\r\n                parent[rb] = ra\r\n\r\n    comps = {}\r\n    for f in removed_faces:\r\n        r = find(f)\r\n        comps.setdefault(r, []).append(f)\r\n\r\n    assignments = {}\r\n    for comp in comps.values():\r\n        score = {}\r\n        for f in comp:\r\n            for nb in neigh[f]:\r\n                lbl = labels[nb]\r\n                if lbl != -1:\r\n                    score[lbl] = score.get(lbl, 0) + 1\r\n        if not score:\r\n            frontier = set(comp)\r\n            visited = set(comp)\r\n            while frontier and not score:\r\n                nxt = set()\r\n                for f in frontier:\r\n                    for nb in neigh[f]:\r\n                        if nb in visited:\r\n                            continue\r\n                        visited.add(nb)\r\n                        if labels[nb] != -1:\r\n                            score[labels[nb]] = score.get(labels[nb], 0) + 1\r\n                        else:\r\n                            nxt.add(nb)\r\n                frontier = nxt\r\n        best = max(score.items(), key=lambda x: x[1])[0] if score else seed_idx[0]\r\n        for f in comp:\r\n            assignments[f] = best\r\n\r\n    return assignments\r\n\r\n\r\ndef export_segments(mesh, face_labels, seed_idx, active_faces, output_dir):\r\n    os.makedirs(output_dir, exist_ok=True)\r\n    row_to_segment = {row: i for i, row in enumerate(seed_idx)}\r\n    segments = [[] for _ in range(len(seed_idx))]\r\n\r\n    for row_idx, seed_row in face_labels.items():\r\n        seg_id = row_to_segment[seed_row]\r\n        face_id = active_faces[row_idx]\r\n        segments[seg_id].append(face_id)\r\n\r\n    for i, face_ids in enumerate(segments):\r\n        if face_ids:\r\n            mesh.submesh([face_ids], append=True)\\\r\n                .export(os.path.join(output_dir, f\"segment_{i}.obj\"))\r\n\r\n\r\ndef main():\r\n    parser = argparse.ArgumentParser(description=\"3D Mesh Segmentation\")\r\n    parser.add_argument(\r\n        \"--mesh_path\",\r\n        type=str,\r\n        default=r\"input\\run\\example.obj\",\r\n        help=\"Path to mesh file (default: input\\\\run\\\\example.obj)\",\r\n    )\r\n    parser.add_argument(\r\n        \"--output_dir\",\r\n        type=str,\r\n        default=\"output\",\r\n        help=\"Path to output directory (default: output)\",\r\n    )\r\n    parser.add_argument(\"--n_seeds\", type=int, default=10, help=\"Number of segments\")\r\n    parser.add_argument(\r\n        \"--curvature_penalty_strength\",\r\n        type=float,\r\n        default=100.0,\r\n        help=\"Angle punishment strength\",\r\n    )\r\n    parser.add_argument(\r\n        \"--seed_idx\",\r\n        type=int,\r\n        nargs=\"*\",\r\n        help=\"Manual seed face indices (optional)\",\r\n    )\r\n\r\n    args = parser.parse_args()\r\n\r\n    t0 = time.perf_counter()  # DEBUG\r\n\r\n    print(\"Segmentation Started\")\r\n\r\n    mesh = load_and_clean_mesh(args.mesh_path)\r\n    print(\"Faces:\", len(mesh.faces))  # DEBUG\r\n\r\n    sparse_matrix, face_coords, active_faces, allowed_idx = build_adjacency_graph(\r\n        mesh, args.curvature_penalty_strength\r\n    )\r\n\r\n    if args.seed_idx is None:\r\n        seed_idx = select_seeds(face_coords, args.n_seeds, allowed_idx)\r\n    else:\r\n        seed_idx = np.array(args.seed_idx, dtype=int)\r\n\r\n    print(f\"Using seed face indices: {seed_idx}\")\r\n\r\n    face_labels = segment_mesh(sparse_matrix, seed_idx, mesh.face_adjacency)\r\n\r\n    export_segments(mesh, face_labels, seed_idx, active_faces, args.output_dir)\r\n    print(\"Segmentation complete.\")\r\n\r\n    print(\"Elapsed:\", time.perf_counter() - t0)  # DEBUG\r\n\r\nif __name__ == \"__main__\":\r\n    main()\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/segment_mesh.py b/segment_mesh.py
+--- a/segment_mesh.py	(revision 7b2351f98e2bf7a8fd39e688c9077f1fac704372)
++++ b/segment_mesh.py	(date 1754056225372)
+@@ -87,7 +87,7 @@
+         pool_size: int, number of faces in the pool
+     """
+     if rng is None:
+-        rng = np.random.default_rng()
++        rng = np.random.default_rng(42)
+ 
+     k = min(pool_size, allowed_idx.size)
+     pool = rng.choice(allowed_idx, size=k, replace=False)
+@@ -106,7 +106,7 @@
+     Returns:
+         seed_idx: array of matrix row indices [0, m-1]
+     """
+-    rng = np.random.default_rng()
++    rng = np.random.default_rng(42)
+ 
+     seed_idx = [pick_first_seed(face_coords, allowed_idx, rng)]
+     if n_seeds == 1:
+@@ -165,6 +165,7 @@
+ 
+     return {i: labels[i] for i in range(n_faces)}
+ 
++
+ def assign_removed_faces(removed_faces, labels, adj, seed_idx):
+     n_faces = labels.shape[0]
+     neigh = [[] for _ in range(n_faces)]
+@@ -172,51 +173,54 @@
+         neigh[a].append(b)
+         neigh[b].append(a)
+ 
+-    parent = np.arange(n_faces, dtype=int)
+-
+-    def find(u):
+-        while parent[u] != u:
+-            parent[u] = parent[parent[u]]
+-            u = parent[u]
+-        return u
+-
+-    for a, b in adj:
+-        if labels[a] == -1 and labels[b] == -1:
+-            ra, rb = find(a), find(b)
+-            if ra != rb:
+-                parent[rb] = ra
+-
+-    comps = {}
+-    for f in removed_faces:
+-        r = find(f)
+-        comps.setdefault(r, []).append(f)
+-
++    orphan_set = set(removed_faces)
+     assignments = {}
+-    for comp in comps.values():
+-        score = {}
+-        for f in comp:
++    changed = True
++
++    # Phase 1: Direkte Nachbarn
++    while changed and orphan_set:
++        changed = False
++        for f in list(orphan_set):
++            counts = {}
+             for nb in neigh[f]:
+                 lbl = labels[nb]
+                 if lbl != -1:
+-                    score[lbl] = score.get(lbl, 0) + 1
+-        if not score:
+-            frontier = set(comp)
+-            visited = set(comp)
+-            while frontier and not score:
++                    counts[lbl] = counts.get(lbl, 0) + 1
++            if counts:
++                best = max(counts.items(), key=lambda x: x[1])[0]
++                assignments[f] = best
++                labels[f] = best
++                orphan_set.remove(f)
++                changed = True
++
++    # Phase 2: BFS für übrige Faces
++    if orphan_set:
++        for f in list(orphan_set):
++            visited = {f}
++            frontier = {f}
++            found = None
++
++            while frontier and found is None:
+                 nxt = set()
+-                for f in frontier:
+-                    for nb in neigh[f]:
++                for u in frontier:
++                    for nb in neigh[u]:
+                         if nb in visited:
+                             continue
+                         visited.add(nb)
+                         if labels[nb] != -1:
+-                            score[labels[nb]] = score.get(labels[nb], 0) + 1
+-                        else:
+-                            nxt.add(nb)
++                            found = labels[nb]
++                            break
++                        nxt.add(nb)
++                    if found is not None:
++                        break
+                 frontier = nxt
+-        best = max(score.items(), key=lambda x: x[1])[0] if score else seed_idx[0]
+-        for f in comp:
+-            assignments[f] = best
++
++            # WICHTIG: Fallback auf ersten Seed statt -1
++            if found is None:
++                found = seed_idx[0]  # Verwende ersten Seed als Fallback
++
++            assignments[f] = found
++            labels[f] = found
+ 
+     return assignments
+ 

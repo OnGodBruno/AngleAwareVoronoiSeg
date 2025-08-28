@@ -1,0 +1,396 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="b3c25e57-b232-4816-868d-87ca68ffd571" name="Changes" comment="changed parameter" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="texture-penalty" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;mikawal&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/OnGodBruno/AngleAwareVoronoiSeg.git&quot;,
+    &quot;accountId&quot;: &quot;689c8116-b236-4eb2-9ffe-23aaf32c2266&quot;
+  }
+}</component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="CurrentFile" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 3
+}</component>
+  <component name="ProjectId" id="2zMz6FVM0nt4eD76xkC0Af8pDuT" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Flask server.AngleAwareVoronoiSeg.executor": "Run",
+    "Flask server.Flask (web_interface.py).executor": "Run",
+    "Python.segment_mesh.executor": "Run",
+    "Python.test_cube.executor": "Run",
+    "Python.web_interface.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "mika-branch",
+    "last_opened_file_path": "C:/Users/bwalt/OneDrive/Desktop/Studium/Semester_4/StuPro/models/AngleAwareVoronoiSeg/AngleAwareVoronoiSeg/input",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\bwalt\OneDrive\Desktop\Studium\Semester_4\StuPro\models\AngleAwareVoronoiSeg\AngleAwareVoronoiSeg\input" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\bwalt\OneDrive\Desktop\Studium\Semester_4\StuPro\models\AngleAwareVoronoiSeg\AngleAwareVoronoiSeg\input" />
+      <recent name="C:\Users\bwalt\OneDrive\Desktop\Studium\Semester_4\StuPro\models\AngleAwareVoronoiSeg\AngleAwareVoronoiSeg\glb_converter" />
+      <recent name="C:\Users\bwalt\OneDrive\Desktop\Studium\Semester_4\StuPro\models\AngleAwareVoronoiSeg\AngleAwareVoronoiSeg" />
+      <recent name="C:\Users\bwalt\OneDrive\Desktop\Studium\Semester_4\StuPro\models\AngleAwareVoronoiSeg\AngleAwareVoronoiSeg\input\run" />
+    </key>
+  </component>
+  <component name="RunManager">
+    <configuration name="AngleAwareVoronoiSeg" type="Python.FlaskServer">
+      <module name="AngleAwareVoronoiSeg" />
+      <option name="target" value="$PROJECT_DIR$/web_interface.py" />
+      <option name="targetType" value="PATH" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="launchJavascriptDebuger" value="false" />
+      <method v="2" />
+    </configuration>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-1632447f56bf-JavaScript-PY-243.26053.29" />
+        <option value="bundled-python-sdk-b1dbf8ef85a6-4df51de95216-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-243.26053.29" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="b3c25e57-b232-4816-868d-87ca68ffd571" name="Changes" comment="" />
+      <created>1751555552970</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1751555552970</updated>
+      <workItem from="1751555554066" duration="2452000" />
+      <workItem from="1751734524292" duration="3940000" />
+      <workItem from="1751816436437" duration="3083000" />
+      <workItem from="1751880884864" duration="18487000" />
+      <workItem from="1751970020461" duration="16042000" />
+      <workItem from="1752062732729" duration="1883000" />
+      <workItem from="1752083927096" duration="6000" />
+      <workItem from="1752577904961" duration="21543000" />
+      <workItem from="1752617937660" duration="2369000" />
+      <workItem from="1752650188609" duration="15344000" />
+      <workItem from="1753178229250" duration="10474000" />
+      <workItem from="1753198626266" duration="6433000" />
+      <workItem from="1753205391063" duration="88000" />
+      <workItem from="1753205633913" duration="3461000" />
+      <workItem from="1753215573038" duration="335000" />
+      <workItem from="1753263283365" duration="6923000" />
+      <workItem from="1753374997679" duration="9543000" />
+      <workItem from="1753817601140" duration="891000" />
+      <workItem from="1753866426990" duration="10558000" />
+      <workItem from="1753896664936" duration="11247000" />
+      <workItem from="1753958461603" duration="17971000" />
+      <workItem from="1754056147795" duration="3873000" />
+      <workItem from="1754229027196" duration="9282000" />
+      <workItem from="1754250484184" duration="2906000" />
+      <workItem from="1755176621743" duration="3190000" />
+      <workItem from="1755265584221" duration="5869000" />
+      <workItem from="1755457444175" duration="5635000" />
+      <workItem from="1755529364463" duration="489000" />
+      <workItem from="1755529867291" duration="4865000" />
+      <workItem from="1755609540525" duration="15915000" />
+      <workItem from="1755685618453" duration="5000" />
+      <workItem from="1755685639268" duration="7626000" />
+      <workItem from="1756062855245" duration="46000" />
+      <workItem from="1756121646402" duration="8335000" />
+      <workItem from="1756141845667" duration="444000" />
+      <workItem from="1756214680358" duration="2319000" />
+      <workItem from="1756285272514" duration="8895000" />
+      <workItem from="1756385513291" duration="3370000" />
+    </task>
+    <task id="LOCAL-00001" summary="added argparser for parameter input via command line (n_seeds, curvature_penalty_strength, and seed_faces)">
+      <option name="closed" value="true" />
+      <created>1751824256158</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1751824256158</updated>
+    </task>
+    <task id="LOCAL-00002" summary="added input and output argument in main()">
+      <option name="closed" value="true" />
+      <created>1751908672999</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1751908672999</updated>
+    </task>
+    <task id="LOCAL-00003" summary="different (faster) approach for select_seeds()">
+      <option name="closed" value="true" />
+      <created>1751911639683</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1751911639683</updated>
+    </task>
+    <task id="LOCAL-00004" summary="small fix">
+      <option name="closed" value="true" />
+      <created>1751912145389</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1751912145389</updated>
+    </task>
+    <task id="LOCAL-00005" summary="added C library implementation for segment_mesh()">
+      <option name="closed" value="true" />
+      <created>1752063518700</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1752063518700</updated>
+    </task>
+    <task id="LOCAL-00006" summary="select_seeds() function now returns an (n,3)-Array with n being the n 3D points which are selected as seeds&#10;&#10;Previously the function only returned the indexes of those seed points, not the points itself">
+      <option name="closed" value="true" />
+      <created>1752593236218</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1752593236218</updated>
+    </task>
+    <task id="LOCAL-00007" summary="implemented C library for build_adjacency_graph() method&#10;&#10;Builds the graph as a sparse matrix now. Changed select_seeds(), segmented_mesh() so it runs with new build_adjacency_graph() method">
+      <option name="closed" value="true" />
+      <created>1752618506115</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1752618506115</updated>
+    </task>
+    <task id="LOCAL-00008" summary="added comments">
+      <option name="closed" value="true" />
+      <created>1752650222080</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1752650222080</updated>
+    </task>
+    <task id="LOCAL-00009" summary="fixed export_segment bug">
+      <option name="closed" value="true" />
+      <created>1752653095144</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1752653095144</updated>
+    </task>
+    <task id="LOCAL-00010" summary="added pick_first_seed() function for an improved starting seed using Random pool + pick best">
+      <option name="closed" value="true" />
+      <created>1752676697649</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1752676697649</updated>
+    </task>
+    <task id="LOCAL-00011" summary=" Replace steep-angle filter with large penalty&#10; &#10;Preserve all faces and retain previous segmentation behavior. Penalty is&#10;computed in log-domain and clamped at 700 to prevent float64 overflow.">
+      <option name="closed" value="true" />
+      <created>1753388322018</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1753388322018</updated>
+    </task>
+    <task id="LOCAL-00012" summary="Fixed error in angle filtering. Segmentation correct again, but a small portion of faces are still getting deleted during the segmentation process">
+      <option name="closed" value="true" />
+      <created>1753910460397</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1753910460397</updated>
+    </task>
+    <task id="LOCAL-00013" summary="WIP assignment of removed faces to the most logical parts">
+      <option name="closed" value="true" />
+      <created>1753982791784</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1753982791784</updated>
+    </task>
+    <task id="LOCAL-00014" summary="WIP texture penalty feature for obj files with uv mapping">
+      <option name="closed" value="true" />
+      <created>1753997663188</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1753997663188</updated>
+    </task>
+    <task id="LOCAL-00015" summary="WIP steep-angle-filter">
+      <option name="closed" value="true" />
+      <created>1754241048632</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1754241048632</updated>
+    </task>
+    <task id="LOCAL-00016" summary="Random State added in rng for reproducibility">
+      <option name="closed" value="true" />
+      <created>1754242029286</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1754242029286</updated>
+    </task>
+    <task id="LOCAL-00017" summary="Random State added in rng for reproducibility">
+      <option name="closed" value="true" />
+      <created>1754242163080</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1754242163080</updated>
+    </task>
+    <task id="LOCAL-00018" summary="poolsize increased">
+      <option name="closed" value="true" />
+      <created>1754242188234</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1754242188234</updated>
+    </task>
+    <task id="LOCAL-00019" summary="removed calculations of edge weights in log space">
+      <option name="closed" value="true" />
+      <created>1754249836917</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1754249836917</updated>
+    </task>
+    <task id="LOCAL-00020" summary="added texture-penalty. Works like before if the object has no texture">
+      <option name="closed" value="true" />
+      <created>1755614677968</created>
+      <option name="number" value="00020" />
+      <option name="presentableId" value="LOCAL-00020" />
+      <option name="project" value="LOCAL" />
+      <updated>1755614677968</updated>
+    </task>
+    <task id="LOCAL-00021" summary="WIP Small bug fixes">
+      <option name="closed" value="true" />
+      <created>1755686951818</created>
+      <option name="number" value="00021" />
+      <option name="presentableId" value="LOCAL-00021" />
+      <option name="project" value="LOCAL" />
+      <updated>1755686951818</updated>
+    </task>
+    <task id="LOCAL-00022" summary="UI supports automatic seed segmentation">
+      <option name="closed" value="true" />
+      <created>1755693052266</created>
+      <option name="number" value="00022" />
+      <option name="presentableId" value="LOCAL-00022" />
+      <option name="project" value="LOCAL" />
+      <updated>1755693052266</updated>
+    </task>
+    <task id="LOCAL-00023" summary="Initial commit auf simplified-segmentmesh">
+      <option name="closed" value="true" />
+      <created>1756141978566</created>
+      <option name="number" value="00023" />
+      <option name="presentableId" value="LOCAL-00023" />
+      <option name="project" value="LOCAL" />
+      <updated>1756141978566</updated>
+    </task>
+    <task id="LOCAL-00024" summary="changed parameter">
+      <option name="closed" value="true" />
+      <created>1756396110880</created>
+      <option name="number" value="00024" />
+      <option name="presentableId" value="LOCAL-00024" />
+      <option name="project" value="LOCAL" />
+      <updated>1756396110880</updated>
+    </task>
+    <option name="localTasksCounter" value="25" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="added argparser for parameter input via command line (n_seeds, curvature_penalty_strength, and seed_faces)" />
+    <MESSAGE value="added input and output argument in main()" />
+    <MESSAGE value="different (faster) approach for select_seeds()" />
+    <MESSAGE value="small fix" />
+    <MESSAGE value="added C library implementation for segment_mesh()" />
+    <MESSAGE value="select_seeds() function now returns an (n,3)-Array with n being the n 3D points which are selected as seeds&#10;&#10;Previously the function only returned the indexes of those seed points, not the points itself" />
+    <MESSAGE value="implemented C library for build_adjacency_graph() method&#10;&#10;Builds the graph as a sparse matrix now. Changed select_seeds(), segmented_mesh() so it runs with new build_adjacency_graph() method" />
+    <MESSAGE value="added comments" />
+    <MESSAGE value="fixed export_segment bug" />
+    <MESSAGE value="added pick_first_seed() function for an improved starting seed using Random pool + pick best" />
+    <MESSAGE value=" Replace steep-angle filter with large penalty&#10; &#10;Preserve all faces and retain previous segmentation behavior. Penalty is&#10;computed in log-domain and clamped at 700 to prevent float64 overflow." />
+    <MESSAGE value="Fixed error in angle filtering. Segmentation correct again, but a small portion of faces are still getting deleted during the segmentation process" />
+    <MESSAGE value="WIP assignment of removed faces to the most logical parts" />
+    <MESSAGE value="WIP texture penalty feature for obj files with uv mapping" />
+    <MESSAGE value="WIP steep-angle-filter" />
+    <MESSAGE value="Random State added in rng for reproducibility" />
+    <MESSAGE value="poolsize increased" />
+    <MESSAGE value="removed calculations of edge weights in log space" />
+    <MESSAGE value="added texture-penalty. Works like before if the object has no texture" />
+    <MESSAGE value="WIP Small bug fixes" />
+    <MESSAGE value="UI supports automatic seed segmentation" />
+    <MESSAGE value="Initial commit auf simplified-segmentmesh" />
+    <MESSAGE value="changed parameter" />
+    <option name="LAST_COMMIT_MESSAGE" value="changed parameter" />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/AngleAwareVoronoiSeg$test_cube.coverage" NAME="test_cube Coverage Results" MODIFIED="1754252780048" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/AngleAwareVoronoiSeg$segment_mesh.coverage" NAME="segment_mesh Coverage Results" MODIFIED="1756289517174" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/AngleAwareVoronoiSeg$web_interface.coverage" NAME="web_interface Coverage Results" MODIFIED="1755457454175" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/AngleAwareVoronoiSeg$Flask__web_interface_py_.coverage" NAME="Flask (web_interface.py) Coverage Results" MODIFIED="1756129782868" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="" />
+    <SUITE FILE_PATH="coverage/AngleAwareVoronoiSeg$AngleAwareVoronoiSeg.coverage" NAME="AngleAwareVoronoiSeg Coverage Results" MODIFIED="1756388988996" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="" />
+  </component>
+</project>
