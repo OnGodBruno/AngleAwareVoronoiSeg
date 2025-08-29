@@ -1,0 +1,230 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+wheels/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+env/
+venv/
+ENV/
+.venv/
+venv.bak/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.nox/
+.tox/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter
+.ipynb_checkpoints
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+Icon?
+
+# Logs and databases
+*.log
+*.sqlite3
+*.db
+
+# Environment / secrets
+.env
+.env.*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files / caches
+tmp/
+temp/
+.cache/
+.cache-*/
+
+# Archives / build artifacts
+*.zip
+*.tar.gz
+*.tgz
+*.egg
+*.whl
+
+# Large / generated mesh and asset files (keep out of repo)
+uploads/
+output/
+exports/
+results/
+*.obj
+*.ply
+*.stl
+*.off
+*.fbx
+*.glb
+*.gltf
+*.hdr
+*.exr
+*.bin
+*.pcd
+*.las
+*.laz
+*.npz
+*.npy
+
+# Notebook / editor checkpoints
+*.ipynb_checkpoints
+
+# Misc
+*.bak
+*.tmp
+*.swp
+*~
+.~*
+
+# Sensitive or local config
+secrets.ini
+credentials.json
+local_settings.py
+```// filepath: c:\Users\bwalt\OneDrive\Desktop\Studium\Semester_4\StuPro\models\AngleAwareVoronoiSeg\AngleAwareVoronoiSeg\.gitignore
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+wheels/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+env/
+venv/
+ENV/
+.venv/
+venv.bak/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.nox/
+.tox/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter
+.ipynb_checkpoints
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+Icon?
+
+# Logs and databases
+*.log
+*.sqlite3
+*.db
+
+# Environment / secrets
+.env
+.env.*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files / caches
+tmp/
+temp/
+.cache/
+.cache-*/
+
+# Archives / build artifacts
+*.zip
+*.tar.gz
+*.tgz
+*.egg
+*.whl
+
+# Large / generated mesh and asset files (keep out of repo)
+uploads/
+output/
+exports/
+results/
+*.obj
+*.ply
+*.stl
+*.off
+*.fbx
+*.glb
+*.gltf
+*.hdr
+*.exr
+*.bin
+*.pcd
+*.las
+*.laz
+*.npz
+*.npy
+
+# Notebook / editor checkpoints
+*.ipynb_checkpoints
+
+# Misc
+*.bak
+*.tmp
+*.swp
+*~
+.~*
+
+# Sensitive or local config
