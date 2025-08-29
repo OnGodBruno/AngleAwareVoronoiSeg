@@ -19,12 +19,11 @@
             <div class="instructions">
                 <strong><i class="fas fa-info-circle"></i> Quick Start Guide</strong>
                 1. Upload or load a mesh file (.obj, .glb, .gltf)<br>
-                2. Adjust curvature penalty strength if needed<br>
-                3. Select a seed color from the palette<br>
-                4. Click on the 3D model to place seeds of that color<br>
-                5. Change colors and add more seeds as needed<br>
-                6. Run segmentation - seeds with the same color will be combined<br>
-                7. Download your segmented results
+                2. Choose between Manual or Automatic segmentation<br>
+                3. <b>Manual:</b> Click on the model to place colored seeds<br>
+                3. <b>Automatic:</b> Enter the number of segments desired<br>
+                4. Run segmentation to see results<br>
+                5. Download your segmented mesh parts
             </div>
             
             <div class="control-section">
@@ -66,10 +65,32 @@
                 </div>
             </div>
             
+            <!-- Segmentation Mode Selection -->
             <div class="control-section">
                 <div class="section-title">
+                    <i class="fas fa-route"></i>
+                    Segmentation Mode
+                </div>
+                
+                <div class="segmentation-mode-selector">
+                    <button class="mode-btn active" id="manualModeBtn" onclick="setSegmentationMode('manual')">
+                        <i class="fas fa-hand-pointer"></i>
+                        <span>Manual</span>
+                        <small>Click to place seeds</small>
+                    </button>
+                    <button class="mode-btn" id="automaticModeBtn" onclick="setSegmentationMode('automatic')">
+                        <i class="fas fa-magic"></i>
+                        <span>Automatic</span>
+                        <small>Set number of segments</small>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Manual Segmentation Controls -->
+            <div class="control-section" id="manualControls">
+                <div class="section-title">
                     <i class="fas fa-mouse-pointer"></i>
-                    Seed Selection
+                    Manual Seed Selection
                 </div>
                 
                 <div class="seed-counter">
@@ -104,6 +125,27 @@
                     <button class="btn-secondary" onclick="toggleSeedMarkers()">
                         <i class="fas fa-eye"></i> Toggle Seeds
                     </button>
+                </div>
+            </div>
+            
+            <!-- Automatic Segmentation Controls -->
+            <div class="control-section" id="automaticControls" style="display: none;">
+                <div class="section-title">
+                    <i class="fas fa-magic"></i>
+                    Automatic Segmentation
+                </div>
+                
+                <div class="control-group">
+                    <label><i class="fas fa-cut"></i> Number of Segments</label>
+                    <input type="number" id="nSeeds" value="10" min="2" max="50" step="1">
+                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                        The mesh will be automatically divided into this many parts
+                    </small>
+                </div>
+                
+                <div class="metric-card" style="margin-top: 16px;">
+                    <div class="metric-value" id="nSeedsDisplay">10</div>
+                    <div class="metric-label">Target Segments</div>
                 </div>
             </div>
             

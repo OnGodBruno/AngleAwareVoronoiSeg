@@ -10,6 +10,7 @@
         let renderErrorCount = 0;
         let maxRenderErrors = 10;
         let currentSeedColor = 'red'; // Default seed color
+        let segmentationMode = 'manual'; // 'manual' or 'automatic'
         
         // Color mapping for seeds
         const seedColors = {
@@ -231,6 +232,48 @@
             showStatus(`Selected ${color} color for new seeds`, 'info');
         }
         
+        function setSegmentationMode(mode) {
+            segmentationMode = mode;
+            
+            const manualBtn = document.getElementById('manualModeBtn');
+            const automaticBtn = document.getElementById('automaticModeBtn');
+            const manualControls = document.getElementById('manualControls');
+            const automaticControls = document.getElementById('automaticControls');
+            
+            if (mode === 'manual') {
+                manualBtn.classList.add('active');
+                automaticBtn.classList.remove('active');
+                manualControls.style.display = 'block';
+                automaticControls.style.display = 'none';
+                seedSelectionMode = true;
+            } else {
+                manualBtn.classList.remove('active');
+                automaticBtn.classList.add('active');
+                manualControls.style.display = 'none';
+                automaticControls.style.display = 'block';
+                seedSelectionMode = false;
+                clearSeeds();
+            }
+            
+            updateSegmentButtonState();
+            showStatus(`Switched to ${mode} segmentation mode`, 'info');
+        }
+
+        function updateSegmentButtonState() {
+            const segmentBtn = document.getElementById('segmentBtn');
+            
+            if (!meshObject) {
+                segmentBtn.disabled = true;
+                return;
+            }
+            
+            if (segmentationMode === 'manual') {
+                segmentBtn.disabled = selectedSeeds.length === 0;
+            } else {
+                segmentBtn.disabled = false;
+            }
+        }
+
         function onWindowResize() {
             const viewer = document.getElementById('viewer');
             camera.aspect = viewer.clientWidth / viewer.clientHeight;
@@ -239,8 +282,12 @@
         }
         
         function onMouseClick(event) {
+            // Only handle clicks in manual mode
+            if (segmentationMode !== 'manual') {
+                return;
+            }
+            
             if (!meshObject || controls.isUserInteracting) {
-                // Don't place seeds if user is rotating the camera
                 return;
             }
             
@@ -353,6 +400,7 @@
                     displayMesh(result);
                     showStatus(`🚀 Mesh uploaded and loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
                     clearSeeds();
+                    updateSegmentButtonState();
                 } else {
                     updateDebugInfo('Server error: ' + result.error);
                     showStatus(`Error processing mesh: ${result.error}`, 'error');
@@ -446,6 +494,7 @@
                     displayMesh(result);
                     showStatus(`🚀 Mesh loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
                     clearSeeds();
+                    updateSegmentButtonState();
                 } else {
                     updateDebugInfo('Server error: ' + result.error);
                     showStatus(`Error loading mesh: ${result.error}`, 'error');
@@ -765,11 +814,10 @@
             
             seedCount.textContent = selectedSeeds.length;
             
+            updateSegmentButtonState();
+
             if (selectedSeeds.length === 0) {
-                segmentBtn.disabled = true;
                 seedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); font-style: italic;">No seeds selected</div>';
-            } else {
-                segmentBtn.disabled = false;
                 
                 // Group seeds by color for display
                 const seedsByColor = {};
@@ -801,59 +849,106 @@
         async function runSegmentation() {
             showLoading(true);
             
-            if (selectedSeeds.length === 0) {
-                showStatus('Running automatic segmentation (no seeds selected)...', 'info');
-                // For now, show a message that automatic segmentation isn't implemented
-                showStatus('Please select at least one seed point by clicking on the mesh.', 'error');
-                showLoading(false);
-                return;
-            } else {
-                showStatus('Processing mesh segmentation with colored seeds...', 'info');
-            }
-            
-            try {
-                // Prepare seed data with colors
-                const seedData = selectedSeeds.map(seed => ({
-                    position: seed.position,
-                    color: seed.color
-                }));
-                
-                const response = await fetch('/segment_with_colored_seeds', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        colored_seeds: seedData,
-                        output_dir: document.getElementById('outputDir').value
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    displaySegmentedMesh(result.face_colors);
-                    let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created`;
-                    if (result.combined_segments) {
-                        statusMessage += ` and combined into ${result.combined_segments} groups by color`;
-                    }
-                    statusMessage += '.';
-                    
-                    if (result.stats) {
-                        const stats = result.stats;
-                        statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
-                        updateDebugInfo(`Segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
-                    }
-                    
-                    showStatus(statusMessage, 'success');
-                    document.getElementById('downloadBtn').disabled = false;
-                } else {
-                    showStatus(`Segmentation error: ${result.error}`, 'error');
+            if (segmentationMode === 'manual') {
+                // Manual segmentation code (keep existing code)
+                if (selectedSeeds.length === 0) {
+                    showStatus('Please select at least one seed point by clicking on the mesh.', 'error');
+                    showLoading(false);
+                    return;
                 }
-            } catch (error) {
-                showStatus(`Network error: ${error.message}`, 'error');
-            } finally {
-                showLoading(false);
+                
+                showStatus('Processing mesh segmentation with colored seeds...', 'info');
+                
+                try {
+                    const seedData = selectedSeeds.map(seed => ({
+                        position: seed.position,
+                        color: seed.color
+                    }));
+                    
+                    const response = await fetch('/segment_with_colored_seeds', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            colored_seeds: seedData,
+                            output_dir: document.getElementById('outputDir').value
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        displaySegmentedMesh(result.face_colors);
+                        let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created`;
+                        if (result.combined_segments) {
+                            statusMessage += ` and combined into ${result.combined_segments} groups by color`;
+                        }
+                        statusMessage += '.';
+                        
+                        if (result.stats) {
+                            const stats = result.stats;
+                            statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
+                            updateDebugInfo(`Segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
+                        }
+                        
+                        showStatus(statusMessage, 'success');
+                        document.getElementById('downloadBtn').disabled = false;
+                    } else {
+                        showStatus(`Segmentation error: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    showStatus(`Network error: ${error.message}`, 'error');
+                } finally {
+                    showLoading(false);
+                }
+            } else {
+                // Automatic segmentation
+                const nSeeds = parseInt(document.getElementById('nSeeds').value);
+                
+                if (nSeeds < 2) {
+                    showStatus('Number of segments must be at least 2', 'error');
+                    showLoading(false);
+                    return;
+                }
+                
+                showStatus(`Running automatic segmentation with ${nSeeds} segments...`, 'info');
+                
+                try {
+                    const response = await fetch('/segment_automatic', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            n_seeds: nSeeds,
+                            output_dir: document.getElementById('outputDir').value
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        displaySegmentedMesh(result.face_colors);
+                        
+                        let statusMessage = `✨ Automatic segmentation complete! ${result.segments_created} segments created.`;
+                        
+                        if (result.stats) {
+                            const stats = result.stats;
+                            statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
+                            updateDebugInfo(`Automatic segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
+                        }
+                        
+                        showStatus(statusMessage, 'success');
+                        document.getElementById('downloadBtn').disabled = false;
+                    } else {
+                        showStatus(`Segmentation error: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    showStatus(`Network error: ${error.message}`, 'error');
+                } finally {
+                    showLoading(false);
+                }
             }
         }
         
@@ -958,6 +1053,18 @@
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
             updateDebugInfo('DOM loaded, initializing...');
+
+            // Update n_seeds display when input changes
+            const nSeedsInput = document.getElementById('nSeeds');
+            const nSeedsDisplay = document.getElementById('nSeedsDisplay');
+
+            if (nSeedsInput) {
+                nSeedsInput.addEventListener('input', function() {
+                    if (nSeedsDisplay) {
+                        nSeedsDisplay.textContent = this.value;
+                    }
+                });
+            }
             
             // Wait a bit for Three.js to load
             setTimeout(() => {

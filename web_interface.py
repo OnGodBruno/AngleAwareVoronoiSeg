@@ -11,7 +11,7 @@ from flask_cors import CORS
 import tempfile
 import zipfile
 from werkzeug.utils import secure_filename
-from segment_mesh import load_and_clean_mesh, build_adjacency_graph, segment_mesh, export_segment
+from segment_mesh import load_and_clean_mesh, build_adjacency_graph, segment_mesh, export_segment, select_seeds
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
@@ -363,6 +363,82 @@ def segment_with_colored_seeds():
     except Exception as e:
         import traceback
         print(f"Error in colored segmentation: {e}")
+        print("Full traceback:", traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)})
+    
+
+@app.route('/segment_automatic', methods=['POST'])
+def segment_automatic():
+    """Perform automatic segmentation using the algorithm's seed selection."""
+    global current_mesh, current_sparse_matrix, current_face_centers
+    
+    try:
+        data = request.json
+        n_seeds = data.get('n_seeds', 10)
+        output_dir = data.get('output_dir', 'output')
+        
+        if current_mesh is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+        
+        print(f"Running automatic segmentation with {n_seeds} seeds...")
+        
+        # Build adjacency graph without user seeds for automatic selection
+        current_sparse_matrix, current_face_centers = build_adjacency_graph(
+            current_mesh, current_curvature_penalty, user_seeds=None
+        )
+        
+        # Use the automatic seed selection from segment_mesh.py
+        seed_idx = select_seeds(current_face_centers, n_seeds)
+        print(f"Automatically selected seed indices: {seed_idx}")
+        
+        # Perform segmentation
+        face_labels = segment_mesh(current_sparse_matrix, seed_idx)
+        
+        # Export segments
+        export_segment(current_mesh, face_labels, seed_idx, output_dir)
+        
+        # Create segment colors for visualization
+        colors = np.array([
+            [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0],
+            [1.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.5, 0.5, 0.5], [1.0, 0.5, 0.0],
+            [0.5, 0.0, 1.0], [0.0, 0.5, 0.5], [0.8, 0.2, 0.2], [0.2, 0.8, 0.2],
+            [0.2, 0.2, 0.8], [0.8, 0.8, 0.2], [0.8, 0.2, 0.8], [0.2, 0.8, 0.8]
+        ])
+        
+        # Initialize all faces with default color
+        total_faces = len(current_mesh.faces)
+        face_colors = np.full((total_faces, 3), [0.7, 0.7, 0.7], dtype=np.float32)
+        
+        # Create mapping of seed indices to segments
+        seed_to_segment = {seed: i for i, seed in enumerate(seed_idx)}
+        
+        # Color segments
+        for face_idx, seed_face in face_labels.items():
+            if seed_face in seed_to_segment:
+                segment_id = seed_to_segment[seed_face]
+                color_idx = segment_id % len(colors)
+                face_colors[face_idx] = colors[color_idx]
+        
+        # Convert to list format for JSON serialization
+        face_colors_list = face_colors.tolist()
+        
+        print(f"Automatic segmentation completed with {len(seed_idx)} segments")
+        
+        return jsonify({
+            'success': True,
+            'segments_created': len(seed_idx),
+            'face_colors': face_colors_list,
+            'output_dir': output_dir,
+            'stats': {
+                'total_faces': total_faces,
+                'segmented_faces': len(face_labels),
+                'coverage_ratio': len(face_labels) / total_faces if total_faces > 0 else 0.0
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in automatic segmentation: {e}")
         print("Full traceback:", traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)})
 
