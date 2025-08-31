@@ -5,6 +5,7 @@ from scipy.sparse import csgraph
 import scipy.sparse as sparse
 import os
 import argparse
+import automatic_seed_selection as autoseed
 
 import time # Debug
 
@@ -28,7 +29,7 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
          curvature_penalty_strength: float, strength of curvature penalty
          user_seeds: list, user-selected seed points or face indices
     Returns:
-         sparse_matrix : scipy.sparse.csr_matrix, shape (N, N)
+        sparse_matrix : scipy.sparse.csr_matrix, shape (N, N)
             Weighted adjacency matrix of the filtered face graph. N is the number of faces.
             Entry (i, j) contains the weight between face i and j,
             combining spatial distance and curvature penalty.
@@ -72,50 +73,38 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     return sparse_matrix, face_centers
 
 
-def pick_first_seed(face_centers, pool_size=64):
-    """
-    Picks a pool of faces at random, selects the one with the greatest average distance from all the faces in the pool.
-    Args:
-        face_centers: numpy.ndarray, shape (N, 3)
-        pool_size: int, number of faces in the pool
-    """
-    rng = np.random.default_rng(42)  # 42 is for debugging needs to be removed in final version
-    n_faces = face_centers.shape[0]
 
-    pool = rng.choice(n_faces, size=pool_size, replace=False)
-    sub = face_centers[pool]
-    dist = np.linalg.norm(sub[:, None] - sub[None], axis=2)
-
-    max_dist = np.argmax(dist.sum(axis=1))
-
-    return pool[max_dist]
-
-
-def select_seeds(face_centers, n_seeds):
-    """
-        Select seed faces using stochastic farthest-point sampling.
-        Args:
-            face_centers: (N×3) array of 3D coordinates for active faces
-            n_seeds: number of seeds to select
-        Returns:
-            seed_idx: array of matrix row indices [0, m-1], with length equal to n_seeds.
-        """
-    rng = np.random.default_rng(42)  # 42 is for debugging needs to be removed in final version
-    n_faces = face_centers.shape[0]
-
-    seed_idx = [pick_first_seed(face_centers)]
-    dist = np.linalg.norm(face_centers - face_centers[seed_idx[0]], axis=1)
-
-    for _ in range(1, n_seeds):
-        probs = dist / dist.sum()
-        new_seed = rng.choice(n_faces, p=probs)
-        seed_idx.append(new_seed)
-
-        new_dist = np.linalg.norm(face_centers - face_centers[new_seed], axis=1)
-        dist = np.minimum(dist, new_dist)
-
-    return np.array(seed_idx)
-
+def select_seeds(mesh, adj_csr, n_seeds):
+    # Compute boundary likelihood
+    be, _ = autoseed.compute_boundary_likelihood(mesh)
+    
+    # Compute boundary set (this was missing!)
+    boundary_edges, boundary_faces = autoseed.compute_boundary_set(be, mesh)
+    
+    # Now compute distance to boundary with all required arguments
+    dtb = autoseed.compute_distance_to_boundary(mesh, be, boundary_faces)
+    
+    # Compute candidates with NMS
+    candidates, r_nms, DM_est, T_min = autoseed.compute_dtb_candidates_nms(mesh, be, dtb)
+    
+    if candidates is None or len(candidates) == 0:
+        candidates = np.arange(mesh.faces.shape[0], dtype=np.int32)
+    
+    # Compute candidate quality (note the typo fix here)
+    q_cand, _ = autoseed.compute_candidate_quality(mesh, dtb, candidates)
+    
+    # Select seeds with graph diversity
+    seed_idx = autoseed.select_seeds_graph_diverse(
+        adj_csr=adj_csr,
+        candidates=candidates,
+        q_cand=q_cand,
+        n_seeds=int(n_seeds),
+        beta=2.0,
+        limit=None,
+        initial_seeds=None
+    )
+    
+    return np.asarray(seed_idx, dtype=np.int32)
 
 def segment_mesh(sparse_matrix, seed_idx):
     """
@@ -202,7 +191,7 @@ def main():
     sparse_matrix, face_centers = build_adjacency_graph(mesh, args.curvature_penalty_strength, user_seeds=None)
     print("Graph Built")
 
-    seed_idx = select_seeds(face_centers, args.n_seeds)
+    seed_idx = select_seeds(mesh, sparse_matrix, args.n_seeds)
     print("Seeds selected")
     print(f"Using seed face indices: {seed_idx}")
 

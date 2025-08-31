@@ -388,7 +388,7 @@ def segment_automatic():
         )
         
         # Use the automatic seed selection from segment_mesh.py
-        seed_idx = select_seeds(current_face_centers, n_seeds)
+        seed_idx = select_seeds(current_mesh, current_sparse_matrix, n_seeds)
         print(f"Automatically selected seed indices: {seed_idx}")
         
         # Perform segmentation
