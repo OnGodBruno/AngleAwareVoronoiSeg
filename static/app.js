@@ -11,6 +11,10 @@
         let maxRenderErrors = 10;
         let currentSeedColor = 'red'; // Default seed color
         let segmentationMode = 'manual'; // 'manual' or 'automatic'
+        let autoSeedMarkersGroup = null; // to show seeds in automatic mode
+        const SEED_MARKER_SCALE = 0.03;   // relative to model diagonal (default 0.01)
+        const SEED_MARKER_MIN = 0.05;
+        const MANUAL_SEED_RADIUS = 0.04;
         
         // Color mapping for seeds
         const seedColors = {
@@ -512,6 +516,7 @@
                 updateDebugInfo(`Displaying mesh: ${data.vertices.length} vertices, ${data.faces.length} faces`);
                 
                 // Clear existing scene first
+                clearAutoSeedMarkers(); 
                 clearScene();
                 
                 // Remove test cube
@@ -710,9 +715,19 @@
             };
             selectedSeeds.push(seedData);
             updateSeedDisplay();
-            
-            // Add visual marker with the selected color
-            const geometry = new THREE.SphereGeometry(0.04, 16, 16);
+
+            // compute marker radius: use MANUAL_SEED_RADIUS if set, otherwise derive from mesh size
+            let radius = MANUAL_SEED_RADIUS;
+            if (radius == null && meshObject) {
+                const bbox = new THREE.Box3().setFromObject(meshObject);
+                const diag = bbox.min.distanceTo(bbox.max);
+                radius = Math.max(SEED_MARKER_SCALE * diag, SEED_MARKER_MIN);
+            }
+            // fallback absolute radius if still null
+            if (radius == null) radius = 0.03;
+
+            // Use unit sphere and scale to radius -> consistent behaviour
+            const geometry = new THREE.SphereGeometry(1, 16, 16);
             const colorRGB = seedColors[currentSeedColor];
             const material = new THREE.MeshLambertMaterial({ 
                 color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
@@ -722,11 +737,13 @@
                 emissiveIntensity: 0.3
             });
             const marker = new THREE.Mesh(geometry, material);
+            marker.scale.setScalar(radius);
             marker.position.set(x, y, z);
             marker.userData = { 
                 isSeedMarker: true, 
                 seedIndex: selectedSeeds.length - 1,
-                seedColor: currentSeedColor
+                seedColor: currentSeedColor,
+                autoSeed: false
             };
             scene.add(marker);
             
@@ -755,7 +772,7 @@
         }
         
         function removeSeedMarkers() {
-            // Remove visual markers from scene
+            // Remove visual markers (both manual and auto) by testing userData.isSeedMarker
             const markersToRemove = [];
             scene.traverse((child) => {
                 if (child.userData && child.userData.isSeedMarker) {
@@ -763,7 +780,7 @@
                 }
             });
             markersToRemove.forEach(marker => {
-                scene.remove(marker);
+                if (marker.parent) marker.parent.remove(marker);
                 if (marker.geometry) marker.geometry.dispose();
                 if (marker.material) marker.material.dispose();
             });
@@ -787,10 +804,32 @@
                 }
             });
         }
+
+        function clearAutoSeedMarkers() {
+            if (!autoSeedMarkersGroup) return;
+            // remove from its parent (meshObject), not scene (handles both cases)
+            if (autoSeedMarkersGroup.parent) {
+                autoSeedMarkersGroup.parent.remove(autoSeedMarkersGroup);
+            } else {
+                scene.remove(autoSeedMarkersGroup);
+            }
+            autoSeedMarkersGroup.traverse(obj => {
+                if (obj.isMesh) {
+                    if (obj.geometry) obj.geometry.dispose();
+                    if (obj.material) {
+                        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                        else obj.material.dispose();
+                    }
+                }
+            });
+            autoSeedMarkersGroup = null;
+        }
         
         function clearSeeds() {
             selectedSeeds = [];
             updateSeedDisplay();
+            removeSeedMarkers();
+            clearAutoSeedMarkers();
             
             // Remove visual markers
             removeSeedMarkers();
@@ -845,6 +884,139 @@
                 seedList.innerHTML = html;
             }
         }
+
+        function showSeedMarkersFromFaces(faceIndices, colors) {
+            clearAutoSeedMarkers();
+            if (!meshData || !meshObject) return;
+            if (!faceIndices || faceIndices.length === 0) return;
+            
+            autoSeedMarkersGroup = new THREE.Group();
+            
+            // Use the same radius as manual seeds
+            const markerRadius = MANUAL_SEED_RADIUS;
+            const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
+            
+            for (let i = 0; i < faceIndices.length; ++i) {
+                const fi = faceIndices[i];
+                if (fi == null || !meshData.faces[fi]) continue;
+                
+                const [a, b, c] = meshData.faces[fi];
+                const v0 = meshData.vertices[a];
+                const v1 = meshData.vertices[b];
+                const v2 = meshData.vertices[c];
+                
+                // Calculate face centroid in local space
+                const cx = (v0[0] + v1[0] + v2[0]) / 3;
+                const cy = (v0[1] + v1[1] + v2[1]) / 3;
+                const cz = (v0[2] + v1[2] + v2[2]) / 3;
+                
+                const color = (colors && colors[i]) ? colors[i] : [1, 0, 0];
+                const mat = new THREE.MeshLambertMaterial({
+                    color: new THREE.Color(color[0], color[1], color[2]),
+                    emissive: new THREE.Color(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2),
+                    transparent: true,
+                    opacity: 0.95,
+                    depthTest: true
+                });
+                
+                const m = new THREE.Mesh(sphereGeo, mat);
+                m.scale.setScalar(markerRadius);
+                // Keep position in local space - no transformation needed
+                m.position.set(cx, cy, cz);
+                m.userData = { isSeedMarker: true, autoSeed: true, seedIndex: i };
+                
+                autoSeedMarkersGroup.add(m);
+            }
+            
+            // Add as child of meshObject so markers follow mesh transformations
+            meshObject.add(autoSeedMarkersGroup);
+        }
+
+        function showSeedMarkersFromPositions(positions, colors, coords = 'local') {
+            clearAutoSeedMarkers();
+            if (!meshData || !meshObject) return;
+            if (!positions || positions.length === 0) return;
+
+            autoSeedMarkersGroup = new THREE.Group();
+
+            const bbox = new THREE.Box3().setFromObject(meshObject);
+            const diag = bbox.min.distanceTo(bbox.max);
+            const markerRadius = Math.max(SEED_MARKER_SCALE * diag, SEED_MARKER_MIN);
+
+            const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
+
+            for (let i = 0; i < positions.length; ++i) {
+                const p = positions[i];
+                if (!p || p.length < 3) continue;
+
+                // ggf. in World Space umrechnen
+                let worldPos = new THREE.Vector3(p[0], p[1], p[2]);
+                if (coords === 'local') {
+                worldPos = worldPos.clone();
+                meshObject.localToWorld(worldPos);
+                }
+
+                const color = (colors && colors[i]) ? colors[i] : [1, 0, 0];
+                const mat = new THREE.MeshLambertMaterial({
+                color: new THREE.Color(color[0], color[1], color[2]),
+                emissive: new THREE.Color(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2),
+                transparent: true,
+                opacity: 0.95,
+                depthTest: true
+                });
+
+                const m = new THREE.Mesh(sphereGeo, mat);
+                m.scale.setScalar(markerRadius);
+                m.position.copy(worldPos);
+                m.userData = { isSeedMarker: true, autoSeed: true, seedIndex: i };
+
+                autoSeedMarkersGroup.add(m);
+            }
+
+            // World-Space Parenting (kein Doppel-Scaling)
+            scene.add(autoSeedMarkersGroup);
+        }
+
+
+        function showSeedMarkersFromPositions(positions, colors) {
+            clearAutoSeedMarkers();
+            if (!meshData || !meshObject) return;
+            if (!positions || positions.length === 0) return;
+
+            autoSeedMarkersGroup = new THREE.Group();
+
+            // compute marker radius relative to model size
+            const bbox = new THREE.Box3().setFromObject(meshObject);
+            const diag = bbox.min.distanceTo(bbox.max);
+            const markerRadius = Math.max(SEED_MARKER_SCALE * diag, SEED_MARKER_MIN);
+
+            const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
+
+            for (let i = 0; i < positions.length; ++i) {
+                const p = positions[i];
+                if (!p || p.length < 3) continue;
+
+                const color = (colors && colors[i]) ? colors[i] : [1, 0, 0];
+                const mat = new THREE.MeshLambertMaterial({
+                    color: new THREE.Color(color[0], color[1], color[2]),
+                    emissive: new THREE.Color(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2),
+                    transparent: true,
+                    opacity: 0.95,
+                    depthTest: true
+                });
+
+                const m = new THREE.Mesh(sphereGeo, mat);
+                m.scale.setScalar(markerRadius);
+                m.position.set(p[0], p[1], p[2]);
+
+                m.userData = { isSeedMarker: true, autoSeed: true, seedIndex: i };
+
+                autoSeedMarkersGroup.add(m);
+            }
+
+            // Attach markers as child of meshObject so they follow the same transforms
+            scene.add(autoSeedMarkersGroup);
+        }
         
         async function runSegmentation() {
             showLoading(true);
@@ -880,6 +1052,17 @@
                     
                     if (result.success) {
                         displaySegmentedMesh(result.face_colors);
+
+                        // show markers: support multiple backend keys (seed_face_indices, seed_positions, clicked_points)
+                        if (result.seed_face_indices && Array.isArray(result.seed_face_indices)) {
+                            showSeedMarkersFromFaces(result.seed_face_indices, result.seed_colors || []);
+                        } else if (result.seed_positions && Array.isArray(result.seed_positions)) {
+                            showSeedMarkersFromPositions(result.seed_positions, result.seed_colors || []);
+                        } else if (result.clicked_points && Array.isArray(result.clicked_points)) {
+                            // clicked_points are already in display coordinates — use them directly
+                            showSeedMarkersFromPositions(result.clicked_points, result.seed_colors || []);
+                        }
+
                         let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created`;
                         if (result.combined_segments) {
                             statusMessage += ` and combined into ${result.combined_segments} groups by color`;
@@ -930,6 +1113,12 @@
                     
                     if (result.success) {
                         displaySegmentedMesh(result.face_colors);
+
+                        if (result.seed_face_indices && Array.isArray(result.seed_face_indices)) {
+                            showSeedMarkersFromFaces(result.seed_face_indices, result.seed_colors || []);
+                        } else if (result.seed_positions && Array.isArray(result.seed_positions)) {
+                            showSeedMarkersFromPositions(result.seed_positions, result.seed_colors || []);
+                        }
                         
                         let statusMessage = `✨ Automatic segmentation complete! ${result.segments_created} segments created.`;
                         
