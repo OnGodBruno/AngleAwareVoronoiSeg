@@ -9,6 +9,67 @@ import argparse
 import time # Debug
 
 
+def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
+
+    vertices = mesh.vertices
+    adj = mesh.face_adjacency
+    E_shared = mesh.face_adjacency_edges
+
+    face_normals = mesh.face_normals
+    n1 = face_normals[adj[:, 0]]
+    n2 = face_normals[adj[:, 1]] 
+
+    v0 = vertices[E_shared[:, 0]]
+    v1 = vertices[E_shared[:, 1]]
+    u = v1 - v0
+    u_norm = np.linalg.norm(u, axis=1, keepdims=True)
+    # avoid division by zero for degenerate edges
+    u = np.divide(u, np.maximum(u_norm, 1e-12), out=np.zeros_like(u), where=(u_norm > 0))
+
+    # robust signed angle via atan2
+    dot_normals = np.einsum('ij,ij->i', n1, n2).clip(-1.0, 1.0) 
+    signed_sin = np.einsum('ij,ij->i', np.cross(n1, n2), u)          
+    signed_angle = np.arctan2(signed_sin, dot_normals)         
+
+    concave_mask = signed_angle > 0.0
+
+    th = np.deg2rad(angle_threshold_deg)
+    # ReLU-like normalization: 0 below threshold, 1 at pi
+    ang_raw = np.abs(signed_angle)
+   
+    denom = max(np.pi - th, 1e-6)
+    score = np.maximum(ang_raw - th, 0.0) / denom
+    if p != 1.0:
+        score = score ** p
+    # only concave edges contribute
+    valley_scores = np.where(concave_mask, score, 0.0).astype(np.float32)
+
+    return valley_scores, concave_mask, signed_angle.astype(np.float32)
+
+
+def get_valley_faces(mesh, angle_threshold_deg=20.0):
+    """Find faces that have at least one valley edge."""
+    valley_scores, _, _ = find_valleys(mesh, angle_threshold_deg)
+    
+    valley_edges = valley_scores > 0
+    valley_face_pairs = mesh.face_adjacency[valley_edges]
+    
+    valley_faces = np.unique(valley_face_pairs.flatten())
+    
+    # Create a mask for all faces
+    valley_face_mask = np.zeros(len(mesh.faces), dtype=bool)
+    valley_face_mask[valley_faces] = True
+    
+    # Get scores for visualization (max valley score for each face)
+    face_scores = np.zeros(len(mesh.faces))
+    for i, (f1, f2) in enumerate(mesh.face_adjacency):
+        if valley_scores[i] > 0:
+            face_scores[f1] = max(face_scores[f1], valley_scores[i])
+            face_scores[f2] = max(face_scores[f2], valley_scores[i])
+    
+    return valley_face_mask, face_scores
+
+
 def load_and_clean_mesh(mesh_path):
     """
     Load and clean a 3D mesh.

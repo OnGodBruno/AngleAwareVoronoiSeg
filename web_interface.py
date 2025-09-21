@@ -27,6 +27,8 @@ current_sparse_matrix = None
 current_face_centers = None
 current_mesh_path = None
 current_curvature_penalty = 100.0
+current_valley_faces = None
+current_valley_scores = None
 
 @app.route('/')
 def index():
@@ -157,10 +159,20 @@ def upload_mesh():
                 current_mesh, curvature_penalty_strength, user_seeds=None
             )
             
+            # Get valley faces for visualization
+            from segment_mesh import get_valley_faces
+            valley_face_mask, valley_scores = get_valley_faces(current_mesh, angle_threshold_deg=20.0)
+            current_valley_faces = valley_face_mask
+            current_valley_scores = valley_scores
+            
             # Prepare mesh data for Three.js
             vertices = current_mesh.vertices.tolist()
             faces = current_mesh.faces.tolist()
             face_centers = current_mesh.triangles_center.tolist()
+            
+            # Convert valley data to lists for JSON
+            valley_faces_list = current_valley_faces.tolist() if current_valley_faces is not None else []
+            valley_scores_list = current_valley_scores.tolist() if current_valley_scores is not None else []
             
             print(f"Converted to lists: vertices={len(vertices)}, faces={len(faces)}, centers={len(face_centers)}")
             
@@ -174,7 +186,9 @@ def upload_mesh():
                 'faces': faces,
                 'face_centers': face_centers,
                 'total_faces': len(current_mesh.faces),
-                'filename': filename
+                'filename': filename,
+                'valley_faces': valley_faces_list,
+                'valley_scores': valley_scores_list
             })
             
         except Exception as mesh_error:
@@ -211,17 +225,29 @@ def load_mesh():
             current_mesh, curvature_penalty_strength, user_seeds=None
         )
         
+        # Get valley faces for visualization
+        from segment_mesh import get_valley_faces
+        valley_face_mask, valley_scores = get_valley_faces(current_mesh, angle_threshold_deg=20.0)
+        current_valley_faces = valley_face_mask
+        current_valley_scores = valley_scores
+        
         # Prepare mesh data for Three.js
         vertices = current_mesh.vertices.tolist()
         faces = current_mesh.faces.tolist()
         face_centers = current_mesh.triangles_center.tolist()
         
+        # Convert valley data to lists for JSON
+        valley_faces_list = current_valley_faces.tolist() if current_valley_faces is not None else []
+        valley_scores_list = current_valley_scores.tolist() if current_valley_scores is not None else []
+                
         return jsonify({
             'success': True,
             'vertices': vertices,
             'faces': faces,
             'face_centers': face_centers,
-            'total_faces': len(current_mesh.faces)
+            'total_faces': len(current_mesh.faces),
+            'valley_faces': valley_faces_list,  # 
+            'valley_scores': valley_scores_list #
         })
         
     except Exception as e:
