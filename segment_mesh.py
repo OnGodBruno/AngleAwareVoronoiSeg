@@ -7,68 +7,7 @@ import os
 import argparse
 
 import time # Debug
-
-
-def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
-
-    vertices = mesh.vertices
-    adj = mesh.face_adjacency
-    E_shared = mesh.face_adjacency_edges
-
-    face_normals = mesh.face_normals
-    n1 = face_normals[adj[:, 0]]
-    n2 = face_normals[adj[:, 1]] 
-
-    v0 = vertices[E_shared[:, 0]]
-    v1 = vertices[E_shared[:, 1]]
-    u = v1 - v0
-    u_norm = np.linalg.norm(u, axis=1, keepdims=True)
-    # avoid division by zero for degenerate edges
-    u = np.divide(u, np.maximum(u_norm, 1e-12), out=np.zeros_like(u), where=(u_norm > 0))
-
-    # robust signed angle via atan2
-    dot_normals = np.einsum('ij,ij->i', n1, n2).clip(-1.0, 1.0) 
-    signed_sin = np.einsum('ij,ij->i', np.cross(n1, n2), u)          
-    signed_angle = np.arctan2(signed_sin, dot_normals)         
-
-    concave_mask = signed_angle > 0.0
-
-    th = np.deg2rad(angle_threshold_deg)
-    # ReLU-like normalization: 0 below threshold, 1 at pi
-    ang_raw = np.abs(signed_angle)
-   
-    denom = max(np.pi - th, 1e-6)
-    score = np.maximum(ang_raw - th, 0.0) / denom
-    if p != 1.0:
-        score = score ** p
-    # only concave edges contribute
-    valley_scores = np.where(concave_mask, score, 0.0).astype(np.float32)
-
-    return valley_scores, concave_mask, signed_angle.astype(np.float32)
-
-
-def get_valley_faces(mesh, angle_threshold_deg=20.0):
-    """Find faces that have at least one valley edge."""
-    valley_scores, _, _ = find_valleys(mesh, angle_threshold_deg)
     
-    valley_edges = valley_scores > 0
-    valley_face_pairs = mesh.face_adjacency[valley_edges]
-    
-    valley_faces = np.unique(valley_face_pairs.flatten())
-    
-    # Create a mask for all faces
-    valley_face_mask = np.zeros(len(mesh.faces), dtype=bool)
-    valley_face_mask[valley_faces] = True
-    
-    # Get scores for visualization (max valley score for each face)
-    face_scores = np.zeros(len(mesh.faces))
-    for i, (f1, f2) in enumerate(mesh.face_adjacency):
-        if valley_scores[i] > 0:
-            face_scores[f1] = max(face_scores[f1], valley_scores[i])
-            face_scores[f2] = max(face_scores[f2], valley_scores[i])
-    
-    return valley_face_mask, face_scores
-
 
 def load_and_clean_mesh(mesh_path):
     """
@@ -77,9 +16,146 @@ def load_and_clean_mesh(mesh_path):
     mesh = trimesh.load(mesh_path, process=True)
     mesh.remove_unreferenced_vertices()
     mesh.remove_infinite_values()
+    mesh.fix_normals()
     return mesh
 
 
+def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
+    """
+    Finds concave edges by calculating the hinge vector and comparing it to the cross product of the normals. Calclates a valley score for each edge.
+    valley_score = ((-theta - angle_threshold_degree) / (180 - angle_threshold_degree))^p for theta < -angle_threshold_degree else 0.0
+    That means the score is between 0.0 and 1.0, where 1.0 is a perfectly concave edge (theta = -180 degree) and 0.0 is a flat edge (theta = 0 degree) or a convex edge under the angle threshold.
+    Args:
+        mesh (_type_): _description_
+        angle_threshold_deg (float, optional): The angle threshold at which an angle is accepted as a concave edge. Defaults to 20.0.
+        p (float, optional): p > 1 emphasizes sharp valleys (slow rise near threshold, fast toward 1), .p < 1 makes it "softer". Defaults to 2.0.
+
+    Returns:
+        numpy.ndarray of float: contains the valley score for each edge in the face adjacency (shape (num_edges, 1))
+    """
+    
+    adj = mesh.face_adjacency
+    n1 = mesh.face_normals[adj[:, 0]]
+    n2 = mesh.face_normals[adj[:, 1]]
+    edge_verts = mesh.face_adjacency_edges 
+    vertices = mesh.vertices
+    faces = mesh.faces
+    
+    
+    if len(adj) == 0:
+        return np.zeros((0, 1), dtype=float)
+    
+    def directed_hinge(face_idx, edge):
+        """
+        Computes the hinge_vector parallel to the edge, pointing from v_start to v_end.
+        Args:
+            face_idx (_type_): index of the face
+            edge (_type_): edge [a,b] where a and b are vertex indices
+        """
+        
+        face_vertices = faces[face_idx] # indexes of the vertices of the face
+        a, b = int(edge[0]), int(edge[1])
+        
+        if np.where(face_vertices == a)[0].size == 0 or np.where(face_vertices == b)[0].size == 0:
+            return None
+
+        idx_a = int(np.where(face_vertices == a)[0][0])
+        idx_b = int(np.where(face_vertices == b)[0][0])
+        
+        nxt_vertice = lambda i: face_vertices[(i + 1) % 3] # get the next vertex in the face
+        
+        if nxt_vertice(idx_a) == b:
+            v_start, v_end = a, b
+        elif nxt_vertice(idx_b) == a:
+            v_start, v_end = b, a
+        else:
+            v_start, v_end = a, b  # fallback if vertices of the edge are not direct neighbors (error in mesh)
+
+        # calculates the vector parallel to the edge, pointing from v_start to v_end
+        hinge_vector = vertices[v_end] - vertices[v_start]
+        
+        nh = np.linalg.norm(hinge_vector)
+        if nh > 0:
+            hinge_vector /= nh
+            return hinge_vector
+        else:
+            return None
+  
+    hinges = np.zeros_like(n1)  # contains hinge vectors for each edge
+    mask_ok = np.ones(len(adj), dtype=bool)  # mask for valid hinges
+    for k, (f1, f2) in enumerate(adj):
+        hinge_vector = directed_hinge(f1, edge_verts[k])
+        if hinge_vector is None or not np.isfinite(hinge_vector).all():
+            mask_ok[k] = False
+        else:
+            hinges[k] = hinge_vector
+    
+    # Normal vectors of the faces having a valid hinge vector
+    n1v = n1[mask_ok]
+    n2v = n2[mask_ok]
+    hv  = hinges[mask_ok]
+    
+    cos = np.einsum('ij,ij->i', n1v, n2v).clip(-1, 1)   # skalarproduct of the normals
+    sin = np.einsum('ij,ij->i', np.cross(n1v, n2v), hv)  # the scalar product of the cross product with the hinge vector
+
+    theta = np.arctan2(sin, cos)  # signed angle between the normals, (-pi, pi]
+    theta_deg = np.degrees(theta)
+    
+    is_valley = np.zeros(len(adj), dtype=bool)
+    is_ridge  = np.zeros(len(adj), dtype=bool)
+    
+    is_valley[mask_ok] = theta_deg < -angle_threshold_deg
+    is_ridge[mask_ok]  = theta_deg > angle_threshold_deg
+    
+    valley_scores = np.zeros(len(adj))
+    valid_idx = np.where(mask_ok)[0]
+    theta_valid = theta_deg[mask_ok]
+    
+    denom = max(1e-9, (180.0 - angle_threshold_deg))
+    valley_mask_valid = theta_valid < -angle_threshold_deg
+    
+    sharp = ((-theta_valid) - angle_threshold_deg) / denom
+    sharp = np.clip(sharp, 0.0, 1.0 )
+    valley_score = np.power(sharp, p)
+
+    # Scores only for koncave edges > angle_threshold, 0.0 else
+    valley_score = np.where(valley_mask_valid, valley_score, 0.0)
+
+    valley_scores[valid_idx] = valley_score
+    valley_scores = valley_scores.reshape(-1, 1)
+    
+    return valley_scores
+    
+
+
+def get_valley_faces(mesh, angle_threshold_deg=20.0):
+    """Find faces that have at least one valley edge."""
+    valley_scores = find_valleys(mesh, angle_threshold_deg)
+    
+    valley_scores_1d = valley_scores.ravel() 
+    valley_edges_mask = valley_scores_1d > 0.0   
+    
+    valley_face_pairs = mesh.face_adjacency[valley_edges_mask]
+    
+    valley_faces = np.unique(valley_face_pairs.reshape(-1))
+    
+    # Create a mask for all faces
+    valley_face_mask = np.zeros(len(mesh.faces), dtype=bool)
+    valley_face_mask[valley_faces] = True
+    
+    # Get scores for visualization (max valley score for each face)
+    face_scores = np.zeros(len(mesh.faces), dtype=float)
+    for i, (f1, f2) in enumerate(mesh.face_adjacency):
+        s = valley_scores_1d[i]
+        if s > 0.0:
+            if s > face_scores[f1]:
+                face_scores[f1] = s
+            if s > face_scores[f2]:
+                face_scores[f2] = s
+    
+    return valley_face_mask, face_scores
+  
+    
 def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     """
     Builds a face adjacency graph with curvature-aware edge weights.
