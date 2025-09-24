@@ -26,107 +26,77 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
     valley_score = ((-theta - angle_threshold_degree) / (180 - angle_threshold_degree))^p for theta < -angle_threshold_degree else 0.0
     That means the score is between 0.0 and 1.0, where 1.0 is a perfectly concave edge (theta = -180 degree) and 0.0 is a flat edge (theta = 0 degree) or a convex edge under the angle threshold.
     Args:
-        mesh (_type_): _description_
         angle_threshold_deg (float, optional): The angle threshold at which an angle is accepted as a concave edge. Defaults to 20.0.
         p (float, optional): p > 1 emphasizes sharp valleys (slow rise near threshold, fast toward 1), .p < 1 makes it "softer". Defaults to 2.0.
 
     Returns:
         numpy.ndarray of float: contains the valley score for each edge in the face adjacency (shape (num_edges, 1))
     """
-    
     adj = mesh.face_adjacency
     n1 = mesh.face_normals[adj[:, 0]]
     n2 = mesh.face_normals[adj[:, 1]]
-    edge_verts = mesh.face_adjacency_edges 
+    edges = mesh.face_adjacency_edges  # (vert_a, vert_b)
     vertices = mesh.vertices
     faces = mesh.faces
-    
     
     if len(adj) == 0:
         return np.zeros((0, 1), dtype=float)
     
-    def directed_hinge(face_idx, edge):
-        """
-        Computes the hinge_vector parallel to the edge, pointing from v_start to v_end.
-        Args:
-            face_idx (_type_): index of the face
-            edge (_type_): edge [a,b] where a and b are vertex indices
-        """
-        
-        face_vertices = faces[face_idx] # indexes of the vertices of the face
-        a, b = int(edge[0]), int(edge[1])
-        
-        if np.where(face_vertices == a)[0].size == 0 or np.where(face_vertices == b)[0].size == 0:
-            return None
-
-        idx_a = int(np.where(face_vertices == a)[0][0])
-        idx_b = int(np.where(face_vertices == b)[0][0])
-        
-        nxt_vertice = lambda i: face_vertices[(i + 1) % 3] # get the next vertex in the face
-        
-        if nxt_vertice(idx_a) == b:
-            v_start, v_end = a, b
-        elif nxt_vertice(idx_b) == a:
-            v_start, v_end = b, a
-        else:
-            v_start, v_end = a, b  # fallback if vertices of the edge are not direct neighbors (error in mesh)
-
-        # calculates the vector parallel to the edge, pointing from v_start to v_end
-        hinge_vector = vertices[v_end] - vertices[v_start]
-        
-        nh = np.linalg.norm(hinge_vector)
-        if nh > 0:
-            hinge_vector /= nh
-            return hinge_vector
-        else:
-            return None
-  
-    hinges = np.zeros_like(n1)  # contains hinge vectors for each edge
-    mask_ok = np.ones(len(adj), dtype=bool)  # mask for valid hinges
-    for k, (f1, f2) in enumerate(adj):
-        hinge_vector = directed_hinge(f1, edge_verts[k])
-        if hinge_vector is None or not np.isfinite(hinge_vector).all():
-            mask_ok[k] = False
-        else:
-            hinges[k] = hinge_vector
+    faces_L = faces[adj[:, 0]]
+    a = edges[:, 0]                  
+    b = edges[:, 1]
     
-    # Normal vectors of the faces having a valid hinge vector
+    # mask for every valid edge
+    mask_a = faces_L == a[:, None]
+    mask_b = faces_L == b[:, None]
+    has_a = mask_a.any(axis=1)
+    has_b = mask_b.any(axis=1)
+    valid_in_face = has_a & has_b
+
+    # index idx of the vertex a and b in the face
+    idx_a = mask_a.argmax(axis=1)
+    idx_b = mask_b.argmax(axis=1)
+
+    # index idx of the next vertex in the face
+    nxt_a_idx = (idx_a + 1) % 3
+    nxt_b_idx = (idx_b + 1) % 3
+    rows = np.arange(len(adj))
+    
+    # value of the next vertex in the face
+    nxt_a_val = faces_L[rows, nxt_a_idx]
+    nxt_b_val = faces_L[rows, nxt_b_idx]
+
+    # start and end vertex of the hinge (depending on the face orientation)
+    cond1 = valid_in_face & (nxt_a_val == b)
+    cond2 = valid_in_face & (nxt_b_val == a)
+    start = np.where(cond1, a, np.where(cond2, b, a))
+    end = np.where(cond1, b, np.where(cond2, a, b))
+
+    hinges = vertices[end] - vertices[start]
+    norms = np.linalg.norm(hinges, axis=1)
+    mask_ok = valid_in_face & (norms > 0)  # only norm vectors with length > 0
+    hinges[mask_ok] = hinges[mask_ok] / norms[mask_ok, None]
+    
+    # contains all normal vectors with valid hinges
     n1v = n1[mask_ok]
     n2v = n2[mask_ok]
-    hv  = hinges[mask_ok]
-    
-    cos = np.einsum('ij,ij->i', n1v, n2v).clip(-1, 1)   # skalarproduct of the normals
-    sin = np.einsum('ij,ij->i', np.cross(n1v, n2v), hv)  # the scalar product of the cross product with the hinge vector
+    hv  = hinges[mask_ok] # contains all valid hinge vectors
 
-    theta = np.arctan2(sin, cos)  # signed angle between the normals, (-pi, pi]
-    theta_deg = np.degrees(theta)
-    
-    is_valley = np.zeros(len(adj), dtype=bool)
-    is_ridge  = np.zeros(len(adj), dtype=bool)
-    
-    is_valley[mask_ok] = theta_deg < -angle_threshold_deg
-    is_ridge[mask_ok]  = theta_deg > angle_threshold_deg
-    
-    valley_scores = np.zeros(len(adj))
-    valid_idx = np.where(mask_ok)[0]
-    theta_valid = theta_deg[mask_ok]
-    
-    denom = max(1e-9, (180.0 - angle_threshold_deg))
-    valley_mask_valid = theta_valid < -angle_threshold_deg
-    
-    sharp = ((-theta_valid) - angle_threshold_deg) / denom
-    sharp = np.clip(sharp, 0.0, 1.0 )
-    valley_score = np.power(sharp, p)
+    # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
+    cos = np.einsum('ij,ij->i', n1v, n2v).clip(-1, 1)
+    sin = np.einsum('ij,ij->i', np.cross(n1v, n2v), hv)
+    theta_deg = np.degrees(np.arctan2(sin, cos)) # range [-180°, 180°]
 
-    # Scores only for koncave edges > angle_threshold, 0.0 else
-    valley_score = np.where(valley_mask_valid, valley_score, 0.0)
+    denom = max(1e-9, (180.0 - angle_threshold_deg)) # avoid division by zero
+    sharp = np.clip(((-theta_deg) - angle_threshold_deg) / denom, 0.0, 1.0)
+    valley_valid = np.where(theta_deg < -angle_threshold_deg, np.power(sharp, p), 0.0)
 
-    valley_scores[valid_idx] = valley_score
-    valley_scores = valley_scores.reshape(-1, 1)
+    valley_scores = np.zeros(len(adj), dtype=float)
+    valley_scores[mask_ok] = valley_valid
     
-    return valley_scores
+    return valley_scores.reshape(-1, 1)
     
-
+   
 
 def get_valley_faces(mesh, angle_threshold_deg=20.0):
     """Find faces that have at least one valley edge."""
