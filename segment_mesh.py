@@ -19,8 +19,75 @@ def load_and_clean_mesh(mesh_path):
     mesh.fix_normals()
     return mesh
 
+def smooth_normals(mesh, k:int=3, sigma_deg: float | None = 25.0):
+    """
+    Smooth face normals of a triangular mesh using iterative neighbor averaging.
 
-def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
+    Each face normal is updated by combining its own direction with those of
+    adjacent faces, weighted by similarity and optionally by a bilateral
+    (angle-based) Gaussian kernel. Neighbor contributions are sign-corrected
+    so that flipped normals do not cancel out.
+
+    Args:
+        mesh: A mesh object with attributes `faces`, `face_normals`,
+              and `face_adjacency` (e.g., a trimesh.Trimesh).
+        k (int): Number of smoothing iterations to apply (default: 3).
+        sigma_deg (float | None): Standard deviation of the bilateral Gaussian
+            in degrees. If set, large angular differences between normals
+            reduce the smoothing weight, preserving sharp edges. If None,
+            all neighbors contribute equally.
+
+    Returns:
+        (ndarray): Array of shape (n_faces, 3) with smoothed, unit-length
+        face normals.
+    """
+    
+    N0 = mesh.face_normals
+    N = N0.astype(np.float32, copy=True)
+    
+    adj = mesh.face_adjacency
+    if adj.size == 0:
+        return N
+
+    i = adj[:, 0].astype(np.int64)
+    j = adj[:, 1].astype(np.int64)
+
+    # positive weights
+    w_pos = np.ones(len(i), dtype=np.float32)
+
+    if sigma_deg is not None:
+        d = np.einsum('ij,ij->i', N[i], N[j]).clip(-1, 1)
+        ang = np.degrees(np.arccos(d))
+        w_pos *= np.exp(-(ang * ang) / (2.0 * (sigma_deg ** 2))).astype(w_pos.dtype, copy=False)
+
+    # sign-weights s_ij = sign(dot(n_i, n_j))  (+1 oder -1)
+    sgn = np.sign(np.einsum('ij,ij->i', N[i], N[j])).astype(w_pos.dtype, copy=False)
+    w_signed = w_pos * sgn
+
+    row = np.concatenate([i, j])
+    col = np.concatenate([j, i])
+    dat_signed = np.concatenate([w_signed, w_signed])      # mit Vorzeichen
+    dat_pos    = np.concatenate([w_pos,    w_pos])         # immer >= 0
+
+    # (N x N)adjancency matrix W. One just for the sign (+1 or -1), one just with positive weights
+    nF = len(mesh.faces)
+    W_signed = sparse.csr_matrix((dat_signed, (row, col)), shape=(nF, nF))
+    W_pos    = sparse.csr_matrix((dat_pos,    (row, col)), shape=(nF, nF))
+
+    deg = (W_pos.sum(axis=1).A.ravel() + 1.0).astype(W_pos.dtype, copy=False)
+
+    # k iterations: N <- (N + W_signed @ N) / deg, then normalize
+    for _ in range(max(0, k)):
+        tmp = W_signed @ N
+        N = (N + tmp) / deg[:, None]
+        # normalize to unit length
+        nr = np.linalg.norm(N, axis=1, keepdims=True)
+        np.divide(N, np.clip(nr, 1e-12, None), out=N)
+
+    return N
+
+
+def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal_smoothing: bool = True) -> np.ndarray:
     """
     Finds concave edges by calculating the hinge vector and comparing it to the cross product of the normals. Calculates a valley score for each edge.
     valley_score = ((-theta - angle_threshold_degree) / (180 - angle_threshold_degree))^p for theta < -angle_threshold_degree else 0.0
@@ -28,7 +95,7 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
     Args:
         angle_threshold_deg (float, optional): The angle threshold at which an angle is accepted as a concave edge. Defaults to 20.0.
         p (float, optional): p > 1 emphasizes sharp valleys (slow rise near threshold, fast toward 1), .p < 1 makes it "softer". Defaults to 2.0.
-
+        normal_smoothing (bool, optional): Whether to use smoothed normals for angle calculation. Defaults to True.
     Returns:
         numpy.ndarray of float: contains the valley score for each edge in the face adjacency (shape (num_edges, 1))
     """
@@ -76,15 +143,30 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
     norms = np.linalg.norm(hinges, axis=1)
     mask_ok = valid_in_face & (norms > 0)  # only norm vectors with length > 0
     hinges[mask_ok] = hinges[mask_ok] / norms[mask_ok, None]
-    
-    # contains all normal vectors with valid hinges
-    n1v = n1[mask_ok]
-    n2v = n2[mask_ok]
     hv  = hinges[mask_ok] # contains all valid hinge vectors
+    
+    # raw face normals
+    n1r = n1[mask_ok]
+    n2r = n2[mask_ok]
 
-    # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
-    cos = np.einsum('ij,ij->i', n1v, n2v).clip(-1, 1)
-    sin = np.einsum('ij,ij->i', np.cross(n1v, n2v), hv)
+    if normal_smoothing:
+        # smoothed face normals
+        N_smooth = smooth_normals(mesh, k=2, sigma_deg=25.0)
+        n1s = N_smooth[adj[:, 0]][mask_ok]
+        n2s = N_smooth[adj[:, 1]][mask_ok]
+    
+        # absolute value of the sinus and the cosine are calculated with the smoothed normals, the sign with the raw normals
+        sin_mag = np.linalg.norm(np.cross(n1s, n2s), axis=1)
+        sign = np.sign(np.einsum('ij,ij->i', np.cross(n1r, n2r), hv))
+        
+        # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
+        sin = sign * sin_mag
+        cos = np.einsum('ij,ij->i', n1s, n2s).clip(-1, 1)
+    else:
+         # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
+        cos = np.einsum('ij,ij->i', n1r, n2r).clip(-1, 1)
+        sin = np.einsum('ij,ij->i', np.cross(n1r, n2r), hv)
+    
     theta_deg = np.degrees(np.arctan2(sin, cos)) # range [-180°, 180°]
 
     denom = max(1e-9, (180.0 - angle_threshold_deg)) # avoid division by zero
@@ -100,7 +182,7 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0):
 
 def get_valley_faces(mesh, angle_threshold_deg=20.0):
     """Find faces that have at least one valley edge."""
-    valley_scores = find_valleys(mesh, angle_threshold_deg)
+    valley_scores = find_valleys(mesh, angle_threshold_deg, p=2.0, normal_smoothing=True)
     
     valley_scores_1d = valley_scores.ravel() 
     valley_edges_mask = valley_scores_1d > 0.0   
