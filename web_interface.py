@@ -18,6 +18,10 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 CORS(app)
 
+# Disable template caching for development
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
 # Create uploads directory if it doesn't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -153,9 +157,11 @@ def upload_mesh():
                 return jsonify({'success': False, 'error': 'Mesh has no vertices or faces'})
             
             # Build adjacency graph - updated to match segment_mesh.py signature
-            current_sparse_matrix, current_face_centers = build_adjacency_graph(
-                current_mesh, curvature_penalty_strength, user_seeds=None
+            print(f"Loading mesh with curvature penalty strength: {curvature_penalty_strength}")
+            current_sparse_matrix, current_face_centers, curvature_stats = build_adjacency_graph(
+                current_mesh, curvature_penalty_strength, user_seeds=None, return_stats=True
             )
+            print(f"Curvature penalty applied: {curvature_stats}")
             
             # Prepare mesh data for Three.js
             vertices = current_mesh.vertices.tolist()
@@ -174,7 +180,8 @@ def upload_mesh():
                 'faces': faces,
                 'face_centers': face_centers,
                 'total_faces': len(current_mesh.faces),
-                'filename': filename
+                'filename': filename,
+                'curvature_stats': curvature_stats
             })
             
         except Exception as mesh_error:
@@ -207,9 +214,11 @@ def load_mesh():
         current_mesh = load_and_clean_mesh(mesh_path)
         
         # Build adjacency graph - updated to match segment_mesh.py signature
-        current_sparse_matrix, current_face_centers = build_adjacency_graph(
-            current_mesh, curvature_penalty_strength, user_seeds=None
+        print(f"Building adjacency graph with curvature penalty strength: {curvature_penalty_strength}")
+        current_sparse_matrix, current_face_centers, curvature_stats = build_adjacency_graph(
+            current_mesh, curvature_penalty_strength, user_seeds=None, return_stats=True
         )
+        print(f"Curvature penalty applied: {curvature_stats}")
         
         # Prepare mesh data for Three.js
         vertices = current_mesh.vertices.tolist()
@@ -221,11 +230,257 @@ def load_mesh():
             'vertices': vertices,
             'faces': faces,
             'face_centers': face_centers,
-            'total_faces': len(current_mesh.faces)
+            'total_faces': len(current_mesh.faces),
+            'curvature_stats': curvature_stats
         })
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/auto_place_seeds', methods=['POST'])
+def auto_place_seeds():
+    """Automatically place seeds using curvature analysis and distance optimization."""
+    global current_mesh, current_sparse_matrix, current_face_centers, current_curvature_penalty
+    
+    try:
+        data = request.json
+        num_seeds = data.get('num_seeds', 3)
+        
+        if current_mesh is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+        
+        if num_seeds < 1 | num_seeds > 20:
+            return jsonify({'success': False, 'error': 'Number of seeds must be between 1 and 20'})
+        
+        print(f"Auto-placing {num_seeds} seeds using optimal algorithm...")
+        
+        # Use the optimal seed placement algorithm
+        seed_positions = auto_place_optimal_seeds(
+            current_mesh, 
+            current_curvature_penalty, 
+            num_seeds
+        )
+        
+        # Convert seed positions to display coordinate system (same transformation as frontend)
+        vertices = current_mesh.vertices
+        min_coords = np.min(vertices, axis=0)
+        max_coords = np.max(vertices, axis=0)
+        center = (min_coords + max_coords) / 2
+        size = max_coords - min_coords
+        max_dim = np.max(size)
+        
+        display_scale = 4.0 / max_dim if max_dim > 0 else 1.0
+        display_center = -center
+        
+        # Transform positions to display coordinates
+        display_positions = []
+        for pos in seed_positions:
+            display_pos = (np.array(pos) + display_center) * display_scale
+            display_positions.append(display_pos.tolist())
+        
+        print(f"Successfully placed {len(display_positions)} optimal seeds")
+        
+        return jsonify({
+            'success': True,
+            'seed_positions': display_positions,
+            'algorithm_info': f'Curvature-optimized placement with geodesic distance maximization',
+            'num_seeds_placed': len(display_positions)
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in auto seed placement: {e}")
+        print("Full traceback:", traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)})
+
+
+def auto_place_optimal_seeds(mesh, curvature_penalty_strength, num_seeds):
+    """
+    Automatically place seeds using improved algorithm:
+    1. Find area with low curvature penalty for first seed
+    2. Use combination of geodesic and Euclidean distance to ensure good spatial distribution
+    3. Add minimum distance constraints to prevent clustering
+    """
+    print(f"Running improved optimal seed placement for {num_seeds} seeds...")
+    
+    # Get mesh properties
+    face_centers = mesh.triangles_center
+    face_normals = mesh.face_normals
+    face_adjacency = mesh.face_adjacency
+    
+    # Calculate mesh scale for distance thresholds
+    mesh_bounds = np.max(face_centers, axis=0) - np.min(face_centers, axis=0)
+    mesh_scale = np.max(mesh_bounds)
+    min_seed_distance = mesh_scale * 0.15  # Minimum 15% of mesh size between seeds
+    
+    print(f"Mesh scale: {mesh_scale:.3f}, minimum seed distance: {min_seed_distance:.3f}")
+    
+    # Calculate curvature penalties for all adjacent face pairs
+    n1 = face_normals[face_adjacency[:, 0]]
+    n2 = face_normals[face_adjacency[:, 1]]
+    angles = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
+    curvature_penalties = np.exp(curvature_penalty_strength * angles)
+    
+    # Calculate average curvature penalty per face
+    face_curvature_scores = np.zeros(len(face_centers))
+    face_neighbor_counts = np.zeros(len(face_centers))
+    
+    for i, (f1, f2) in enumerate(face_adjacency):
+        penalty = curvature_penalties[i]
+        face_curvature_scores[f1] += penalty
+        face_curvature_scores[f2] += penalty
+        face_neighbor_counts[f1] += 1
+        face_neighbor_counts[f2] += 1
+    
+    # Average out the curvature scores
+    valid_faces = face_neighbor_counts > 0
+    face_curvature_scores[valid_faces] /= face_neighbor_counts[valid_faces]
+    
+    print(f"Calculated curvature scores. Min: {np.min(face_curvature_scores):.3f}, Max: {np.max(face_curvature_scores):.3f}")
+    
+    # Find faces with low curvature (smooth areas) for first seed
+    low_curvature_threshold = np.percentile(face_curvature_scores[valid_faces], 25)  # Bottom 25%
+    low_curvature_faces = np.where((face_curvature_scores <= low_curvature_threshold) & valid_faces)[0]
+    
+    if len(low_curvature_faces) == 0:
+        low_curvature_faces = np.where(valid_faces)[0]
+    
+    # Pick first seed from low curvature area that's also near center of mesh
+    mesh_center = np.mean(face_centers, axis=0)
+    center_distances = np.linalg.norm(face_centers[low_curvature_faces] - mesh_center, axis=1)
+    # Choose from faces that are reasonably central (within 60% of max distance from center)
+    max_center_dist = np.max(center_distances)
+    central_threshold = max_center_dist * 0.6
+    central_low_curv_faces = low_curvature_faces[center_distances <= central_threshold]
+    
+    if len(central_low_curv_faces) == 0:
+        central_low_curv_faces = low_curvature_faces
+    
+    np.random.seed(42)  # For reproducible results
+    first_seed_face = np.random.choice(central_low_curv_faces)
+    selected_seeds = [first_seed_face]
+    
+    print(f"First seed placed at face {first_seed_face} (curvature score: {face_curvature_scores[first_seed_face]:.3f}, distance from center: {np.linalg.norm(face_centers[first_seed_face] - mesh_center):.3f})")
+    
+    if num_seeds == 1:
+        return [face_centers[first_seed_face].tolist()]
+    
+    # Build adjacency matrix for geodesic distances
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import dijkstra
+    
+    edge_lengths = mesh.edges_unique_length
+    avg_edge_length = np.mean(edge_lengths)
+    
+    # Calculate edge weights (spatial distance + curvature penalty)
+    p1 = face_centers[face_adjacency[:, 0]]
+    p2 = face_centers[face_adjacency[:, 1]]
+    spatial_dist = np.linalg.norm(p2 - p1, axis=1)
+    spatial_penalty = 1 + (spatial_dist / avg_edge_length) ** 2
+    weights = spatial_penalty * curvature_penalties
+    
+    # Create symmetric sparse matrix
+    n_faces = len(face_centers)
+    row = np.concatenate([face_adjacency[:, 0], face_adjacency[:, 1]])
+    col = np.concatenate([face_adjacency[:, 1], face_adjacency[:, 0]])
+    data = np.concatenate([weights, weights])
+    
+    sparse_matrix = csr_matrix((data, (row, col)), shape=(n_faces, n_faces))
+    
+    print(f"Built adjacency matrix: {n_faces} faces, {len(weights)} edges")
+    
+    # Place remaining seeds iteratively with improved algorithm
+    for seed_num in range(1, num_seeds):
+        print(f"Placing seed {seed_num + 1}/{num_seeds}...")
+        
+        # Calculate Euclidean distances from all current seeds
+        min_euclidean_dist = np.full(n_faces, np.inf)
+        for seed_face in selected_seeds:
+            euclidean_dists = np.linalg.norm(face_centers - face_centers[seed_face], axis=1)
+            min_euclidean_dist = np.minimum(min_euclidean_dist, euclidean_dists)
+        
+        # Find faces that are far enough away (minimum distance constraint)
+        far_enough_faces = min_euclidean_dist >= min_seed_distance
+        
+        # If no faces are far enough, reduce the threshold
+        if not np.any(far_enough_faces):
+            reduced_threshold = min_seed_distance * 0.5
+            far_enough_faces = min_euclidean_dist >= reduced_threshold
+            print(f"Reduced minimum distance to {reduced_threshold:.3f}")
+        
+        # Among faces that are far enough, prefer those with low curvature
+        candidate_faces = np.where(far_enough_faces & valid_faces)[0]
+        
+        if len(candidate_faces) == 0:
+            print("Warning: No valid candidates found, using all valid faces")
+            candidate_faces = np.where(valid_faces)[0]
+        
+        # Calculate geodesic distances from current seeds to candidate faces
+        current_seed_indices = np.array(selected_seeds)
+        geodesic_distances = dijkstra(sparse_matrix, indices=current_seed_indices, directed=False)
+        
+        # For each candidate face, find minimum geodesic distance to any existing seed
+        min_geodesic_dist = np.full(n_faces, np.inf)
+        for i in range(len(current_seed_indices)):
+            geodesic_dist_from_seed = geodesic_distances[i]
+            min_geodesic_dist = np.minimum(min_geodesic_dist, geodesic_dist_from_seed)
+        
+        # Combine geodesic and Euclidean distances with curvature preference
+        combined_scores = np.zeros(n_faces)
+        for face_idx in candidate_faces:
+            if np.isfinite(min_geodesic_dist[face_idx]):
+                # Normalize geodesic distance
+                geodesic_score = min_geodesic_dist[face_idx]
+                
+                # Normalize Euclidean distance
+                euclidean_score = min_euclidean_dist[face_idx] / mesh_scale
+                
+                # Inverse curvature score (lower curvature = higher score)
+                curvature_score = 1.0 / (1.0 + face_curvature_scores[face_idx])
+                
+                # Combined score: 60% geodesic, 30% euclidean, 10% curvature
+                combined_scores[face_idx] = (0.6 * geodesic_score + 
+                                           0.3 * euclidean_score * mesh_scale + 
+                                           0.1 * curvature_score * mesh_scale)
+            
+        # Find the best candidate
+        valid_scores = combined_scores[candidate_faces]
+        if len(valid_scores) > 0 and np.max(valid_scores) > 0:
+            best_local_idx = np.argmax(valid_scores)
+            next_seed_face = candidate_faces[best_local_idx]
+        else:
+            # Fallback: use the face with maximum Euclidean distance
+            next_seed_face = np.argmax(min_euclidean_dist)
+            print(f"Fallback: using face with max Euclidean distance")
+        
+        selected_seeds.append(next_seed_face)
+        
+        euclidean_dist = min_euclidean_dist[next_seed_face]
+        geodesic_dist = min_geodesic_dist[next_seed_face] if np.isfinite(min_geodesic_dist[next_seed_face]) else "inf"
+        curvature_score = face_curvature_scores[next_seed_face]
+        
+        print(f"Seed {seed_num + 1} placed at face {next_seed_face}")
+        print(f"  Euclidean distance: {euclidean_dist:.3f}")
+        print(f"  Geodesic distance: {geodesic_dist}")
+        print(f"  Curvature score: {curvature_score:.3f}")
+        print(f"  Combined score: {combined_scores[next_seed_face]:.3f}")
+    
+    # Convert face indices to 3D positions
+    seed_positions = []
+    for seed_face in selected_seeds:
+        position = face_centers[seed_face]
+        seed_positions.append(position.tolist())
+    
+    # Verify final distances between seeds
+    print("\nFinal seed separation analysis:")
+    for i in range(len(selected_seeds)):
+        for j in range(i+1, len(selected_seeds)):
+            dist = np.linalg.norm(face_centers[selected_seeds[i]] - face_centers[selected_seeds[j]])
+            print(f"  Seeds {i+1}-{j+1}: {dist:.3f}")
+    
+    print(f"Completed improved seed placement: {len(seed_positions)} seeds with better spatial distribution")
+    return seed_positions
+
 
 @app.route('/segment_with_colored_seeds', methods=['POST'])
 def segment_with_colored_seeds():
@@ -598,6 +853,271 @@ def download_segments():
         return send_file(temp_zip.name, as_attachment=True, download_name='segments.zip')
         
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/visualize_geodesic_distance', methods=['POST'])
+def visualize_geodesic_distance():
+    """
+    Calculate and return geodesic distances from a clicked point for visualization.
+    """
+    global current_mesh, current_sparse_matrix
+
+    try:
+        data = request.json
+        clicked_point = data.get('clicked_point')
+        curvature_penalty_strength = data.get('curvature_penalty_strength', 100.0)
+
+        if clicked_point is None:
+            return jsonify({'success': False, 'error': 'No clicked point provided'})
+
+        if current_mesh is None or current_sparse_matrix is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded or graph not built'})
+
+        # Transform clicked point back to original mesh coordinates
+        vertices = current_mesh.vertices
+        min_coords = np.min(vertices, axis=0)
+        max_coords = np.max(vertices, axis=0)
+        center = (min_coords + max_coords) / 2
+        size = max_coords - min_coords
+        max_dim = np.max(size)
+
+        display_scale = 4.0 / max_dim if max_dim > 0 else 1.0
+        display_center = -center
+
+        original_point = (np.array(clicked_point) - display_center) / display_scale
+
+        # Find the closest face to the clicked point
+        face_centers = current_mesh.triangles_center
+        distances_to_faces = np.linalg.norm(face_centers - original_point, axis=1)
+        seed_face_idx = np.argmin(distances_to_faces)
+
+        print(f"Visualizing geodesic distance from seed face: {seed_face_idx}")
+
+        # Build graph with curvature penalties
+        print("Building graph with curvature penalties...")
+        sparse_matrix, _ = build_adjacency_graph(current_mesh, curvature_penalty_strength)
+
+        # Calculate geodesic distances from the seed face
+        from scipy.sparse.csgraph import dijkstra
+        geodesic_distances = dijkstra(
+            csgraph=sparse_matrix,
+            directed=False,
+            indices=seed_face_idx,
+            unweighted=False
+        )
+
+        # Handle infinite distances (unreachable faces)
+        finite_mask = np.isfinite(geodesic_distances)
+        if not np.any(finite_mask):
+            return jsonify({'success': False, 'error': 'No finite geodesic distances found.'})
+
+        finite_distances = geodesic_distances[finite_mask]
+        min_dist = np.min(finite_distances)
+        max_dist = np.max(finite_distances)
+
+        print(f"Geodesic distance range: [{min_dist}, {max_dist}]")
+
+        # Normalize distances to [0, 1] for colormapping
+        if max_dist > min_dist:
+            normalized_distances = (geodesic_distances - min_dist) / (max_dist - min_dist)
+        else:
+            normalized_distances = np.zeros_like(geodesic_distances)
+
+        # Prepare face colors for visualization
+        total_faces = len(current_mesh.faces)
+        face_colors = np.full((total_faces, 3), [0.5, 0.5, 0.5], dtype=np.float32)  # Default gray for unreachable faces
+
+        # Apply simple green-to-red colormap to finite-distance faces
+        colors_reachable = np.zeros((total_faces, 3))
+
+        colors_reachable[finite_mask, 0] = normalized_distances[finite_mask]  # Red channel
+        colors_reachable[finite_mask, 1] = 1.0 - normalized_distances[finite_mask]  # Green channel
+        colors_reachable[finite_mask, 2] = 0.0  # Blue channel
+
+        face_colors[finite_mask] = colors_reachable[finite_mask]
+
+        return jsonify({
+            'success': True,
+            'face_colors': face_colors.tolist()
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"Error in geodesic distance visualization: {e}")
+        print("Full traceback:", traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/visualize_geodesic_with_penalty', methods=['POST'])
+def visualize_geodesic_with_penalty():
+    """
+    Visualize geodesic distances with curvature penalties.
+    """
+    global current_mesh, current_sparse_matrix, current_face_centers
+
+    try:
+        data = request.json
+        curvature_penalty_strength = data.get('curvature_penalty_strength', 100.0)
+
+        if current_mesh is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+
+        # Build adjacency graph with curvature penalties
+        sparse_matrix, face_centers = build_adjacency_graph(current_mesh, curvature_penalty_strength)
+
+        # Compute geodesic distances from a random seed
+        seed_idx = np.random.choice(face_centers.shape[0])
+        distances = np.zeros(face_centers.shape[0])
+
+        for i in range(face_centers.shape[0]):
+            distances[i] = sparse_matrix[seed_idx, i]
+
+        # Normalize distances for visualization
+        distances = np.nan_to_num(distances, nan=np.max(distances))
+        distances = (distances - distances.min()) / (distances.max() - distances.min())
+
+        # Log data for debugging
+        print("Face Centers:", face_centers[:10])
+        print("Distances:", distances[:10])
+
+        # Prepare data for visualization
+        visualization_data = {
+            'face_centers': face_centers.tolist(),
+            'distances': distances.tolist()
+        }
+
+        return jsonify({'success': True, 'visualization_data': visualization_data})
+
+    except Exception as e:
+        import traceback
+        print(f"Error in geodesic visualization: {e}")
+        print("Full traceback:", traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/facility_place_seeds', methods=['POST'])
+def facility_place_seeds():
+    """Use facility placement algorithms to optimally place seeds on the mesh."""
+    global current_mesh, current_sparse_matrix, current_face_centers, current_curvature_penalty
+    
+    try:
+        data = request.json
+        num_seeds = data.get('num_seeds', 5)
+        strategy = data.get('strategy', 'adaptive_hybrid')
+        
+        if current_mesh is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+            
+        if not (1 <= num_seeds <= 20):
+            return jsonify({'success': False, 'error': 'Number of seeds must be between 1 and 20'})
+            
+        print(f"Facility placement: {num_seeds} seeds using {strategy} strategy")
+        
+        # Import the facility placement function
+        try:
+            from src.services.automatic_placement import automatic_seed_placement
+        except ImportError:
+            return jsonify({'success': False, 'error': 'Facility placement module not available'})
+        
+        # Build adjacency graph with penalties
+        penalty_matrix, face_centers = build_adjacency_graph(
+            current_mesh, current_curvature_penalty, user_seeds=None
+        )
+        
+        # Get face centers for spatial algorithms
+        mesh_face_centers = current_mesh.triangles_center
+        
+        # Run facility placement algorithm
+        optimal_seed_indices = automatic_seed_placement(
+            adjacency_graph=penalty_matrix,
+            num_seeds=num_seeds,
+            face_centers=mesh_face_centers,
+            strategy=strategy,
+            max_computation_time=30.0,
+            verbose=True
+        )
+        
+        print(f"Facility placement found seeds at face indices: {optimal_seed_indices}")
+        
+        # Convert face indices to 3D positions
+        seed_positions = []
+        for face_idx in optimal_seed_indices:
+            position = mesh_face_centers[face_idx]
+            seed_positions.append(position.tolist())
+        
+        # Transform positions to display coordinate system
+        vertices = current_mesh.vertices
+        min_coords = np.min(vertices, axis=0)
+        max_coords = np.max(vertices, axis=0)
+        center = (min_coords + max_coords) / 2
+        size = max_coords - min_coords
+        max_dim = np.max(size)
+        
+        display_scale = 4.0 / max_dim if max_dim > 0 else 1.0
+        display_center = -center
+        
+        display_positions = []
+        for pos in seed_positions:
+            display_pos = (np.array(pos) + display_center) * display_scale
+            display_positions.append(display_pos.tolist())
+        
+        # Assign colors to seeds
+        color_palette = [
+            'red', 'green', 'blue', 'yellow', 'magenta', 'cyan', 
+            'orange', 'purple', 'pink', 'lime', 'brown', 'teal',
+            'navy', 'maroon', 'olive', 'aqua', 'silver', 'gray',
+            'fuchsia', 'indigo'
+        ]
+        
+        colored_seeds = []
+        for i, pos in enumerate(display_positions):
+            color = color_palette[i % len(color_palette)]
+            colored_seeds.append({
+                'position': pos,
+                'color': color,
+                'face_idx': int(optimal_seed_indices[i])
+            })
+        
+        return jsonify({
+            'success': True,
+            'seeds': colored_seeds,
+            'algorithm_info': f'Facility placement using {strategy} strategy',
+            'num_seeds_placed': len(colored_seeds),
+            'strategy_used': strategy
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in facility placement: {e}")
+        print("Full traceback:", traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/update_penalty', methods=['POST'])
+def update_penalty():
+    """Update the curvature penalty and rebuild the adjacency graph."""
+    global current_mesh, current_sparse_matrix, current_face_centers, current_curvature_penalty
+    
+    try:
+        data = request.json
+        new_penalty = float(data.get('curvature_penalty_strength'))
+        
+        if current_mesh is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+            
+        current_curvature_penalty = new_penalty
+        
+        print(f"Updating curvature penalty to: {new_penalty}")
+        
+        # Rebuild the graph with the new penalty
+        current_sparse_matrix, current_face_centers = build_adjacency_graph(
+            current_mesh, current_curvature_penalty, user_seeds=None
+        )
+        
+        return jsonify({'success': True, 'message': f'Penalty updated to {new_penalty}'})
+        
+    except Exception as e:
+        import traceback
+        print(f"Error updating penalty: {e}")
+        print("Full traceback:", traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':

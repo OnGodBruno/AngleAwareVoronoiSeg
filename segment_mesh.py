@@ -1,4 +1,3 @@
-
 import trimesh
 import numpy as np
 from scipy.sparse import csgraph
@@ -19,22 +18,25 @@ def load_and_clean_mesh(mesh_path):
     return mesh
 
 
-def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
+def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None, return_stats=False):
     """
-    Builds a face adjacency graph with curvature-aware edge weights.
+    Builds a face adjacency graph with directional curvature-aware edge weights.
 
     Args:
          mesh: trimesh object
          curvature_penalty_strength: float, strength of curvature penalty
          user_seeds: list, user-selected seed points or face indices
+         return_stats: bool, whether to return curvature statistics
     Returns:
          sparse_matrix : scipy.sparse.csr_matrix, shape (N, N)
             Weighted adjacency matrix of the filtered face graph. N is the number of faces.
             Entry (i, j) contains the weight between face i and j,
-            combining spatial distance and curvature penalty.
+            combining spatial distance and directional curvature penalty.
         face_centers : numpy.ndarray, shape (N, 3)
             Array of 3D centroids corresponding to the faces in the graph. Row index i of
             `sparse_matrix` maps directly to `face_centers[i]`.
+        curvature_stats : dict (optional, if return_stats=True)
+            Dictionary containing curvature penalty statistics
     """
     face_centers = mesh.triangles_center
     face_normals = mesh.face_normals
@@ -52,11 +54,26 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     spatial_dist = np.linalg.norm(p2 - p1, axis=1)
     angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
 
+    # Directional curvature penalty
     # Penalties
-    curvature_penalty = np.exp(curvature_penalty_strength * angle)
-    spatial_penalty = 1 + (spatial_dist / avg_edge_length )**2
+    curvature_penalty = curvature_penalty_strength * angle
+    
+    #TESTING START
+    # Store curvature penalty statistics for reporting (Only for testing purposes)
+    curvature_stats = {
+        'min': float(curvature_penalty.min()),
+        'max': float(curvature_penalty.max()),
+        'mean': float(curvature_penalty.mean()),
+        'median': float(np.median(curvature_penalty)),
+        'strength': curvature_penalty_strength
+    }
+    
+    print(f"Curvature penalty - Min: {curvature_stats['min']:.4f}, Max: {curvature_stats['max']:.4f}, Mean: {curvature_stats['mean']:.4f}, Median: {curvature_stats['median']:.4f}")
+    #TESTING END
 
-    weights = spatial_penalty + curvature_penalty
+    spatial_penalty = (spatial_dist / avg_edge_length)
+
+    weights = spatial_penalty + curvature_penalty * 10
 
     row = adj[:, 0]
     col = adj[:, 1]
@@ -69,7 +86,10 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     sparse_matrix = sparse.csr_matrix((all_weights, (all_row, all_col)),
                                       shape=(N, N), dtype=np.float64)
 
-    return sparse_matrix, face_centers
+    if return_stats:
+        return sparse_matrix, face_centers, curvature_stats
+    else:
+        return sparse_matrix, face_centers
 
 
 def pick_first_seed(face_centers, pool_size=64):
@@ -132,11 +152,19 @@ def segment_mesh(sparse_matrix, seed_idx):
         `sparse_matrix`. Each face_i is assigned the seed_j to which it has the
         shortest geodesic (edge‑weight) distance.
     """
+    # Modify Dijkstra to include additional penalties during propagation
     dist = csgraph.dijkstra(sparse_matrix, indices=seed_idx, directed=False, return_predecessors=False)
+
+    # Apply additional penalties based on context
+    for i, seed in enumerate(seed_idx):
+        for j in range(dist.shape[1]):
+            if np.isfinite(dist[i, j]):
+                # Example: Add a penalty based on distance and curvature
+                dist[i, j] += 0.1 * dist[i, j]  # Adjust this formula as needed
 
     # DEBUG--
     inf_count = np.sum(~np.isfinite(dist), axis=None)
-    print(print(f"Distance matrix: {inf_count}/{dist.size} infinite entries ({100 * inf_count /dist.size:.2f}%)"))
+    print(f"Distance matrix after penalties: {inf_count}/{dist.size} infinite entries ({100 * inf_count / dist.size:.2f}%)")
     # --------
 
     winner = np.argmin(dist, axis=0)

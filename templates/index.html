@@ -83,6 +83,11 @@
                         <span>Automatic</span>
                         <small>Set number of segments</small>
                     </button>
+                    <button class="mode-btn" id="geodesicModeBtn" onclick="setSegmentationMode('geodesic')">
+                        <i class="fas fa-ruler-combined"></i>
+                        <span>Geodesic</span>
+                        <small>Visualize distances</small>
+                    </button>
                 </div>
             </div>
             
@@ -110,12 +115,49 @@
                             <div class="color-option" data-color="cyan" style="background-color: #00ffff;" onclick="selectSeedColor('cyan', this)"></div>
                             <div class="color-option" data-color="orange" style="background-color: #ff8000;" onclick="selectSeedColor('orange', this)"></div>
                             <div class="color-option" data-color="purple" style="background-color: #8000ff;" onclick="selectSeedColor('purple', this)"></div>
+                            <div class="color-option" data-color="pink" style="background-color: #ff69b4;" onclick="selectSeedColor('pink', this)"></div>
+                            <div class="color-option" data-color="lime" style="background-color: #32cd32;" onclick="selectSeedColor('lime', this)"></div>
+                            <div class="color-option" data-color="brown" style="background-color: #8b4513;" onclick="selectSeedColor('brown', this)"></div>
+                            <div class="color-option" data-color="teal" style="background-color: #008080;" onclick="selectSeedColor('teal', this)"></div>
                         </div>
                     </div>
                 </div>
                 
                 <div class="seed-list" id="seedList">
                     <div style="text-align: center; color: var(--text-muted); font-style: italic;">No seeds selected</div>
+                </div>
+                
+                <div class="control-group" style="margin-bottom: 16px;">
+                    <label><i class="fas fa-magic"></i> Auto-Place Seeds</label>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                        <input type="number" id="autoSeedCount" value="3" min="1" max="12" step="1" style="width: 80px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-primary);">
+                        <button class="btn-secondary" onclick="autoPlaceSeeds()" id="autoSeedBtn" style="flex: 1;">
+                            <i class="fas fa-wand-magic-sparkles"></i> Auto Place
+                        </button>
+                    </div>
+                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                        Automatically place seeds in optimal locations
+                    </small>
+                </div>
+
+                <div class="control-group" style="margin-bottom: 16px;">
+                    <label><i class="fas fa-cogs"></i> Facility Placement Algorithm</label>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                        <input type="number" id="facilitySeeds" value="5" min="1" max="20" step="1" style="width: 80px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-primary);">
+                        <select id="facilityStrategy" style="width: 120px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-primary);">
+                            <option value="adaptive_hybrid">Adaptive</option>
+                            <option value="greedy_minimax">Greedy</option>
+                            <option value="gonzalez_approximation">Gonzalez</option>
+                            <option value="farthest_first">Farthest</option>
+                            <option value="kmeans_plus_plus">K-means++</option>
+                        </select>
+                        <button class="btn-primary" onclick="facilityPlaceSeeds()" id="facilityBtn" style="flex: 1;">
+                            <i class="fas fa-sitemap"></i> Facility Place
+                        </button>
+                    </div>
+                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                        Use advanced facility placement algorithms for optimal seed distribution
+                    </small>
                 </div>
                 
                 <div class="btn-group">
@@ -125,6 +167,17 @@
                     <button class="btn-secondary" onclick="toggleSeedMarkers()">
                         <i class="fas fa-eye"></i> Toggle Seeds
                     </button>
+                </div>
+            </div>
+
+            <!-- Geodesic Distance Controls -->
+            <div class="control-section" id="geodesicControls" style="display: none;">
+                <div class="section-title">
+                    <i class="fas fa-ruler-combined"></i>
+                    Geodesic Distance
+                </div>
+                <div class="instructions">
+                    Click on the mesh to select a point. The mesh will be colored to show the geodesic distance from that point.
                 </div>
             </div>
             
@@ -187,6 +240,24 @@
                     </button>
                 </div>
             </div>
+
+            <!-- Geodesic Distance Visualization Section -->
+            <div class="control-section" id="geodesicVisualizationControls" style="display: none;">
+                <div class="section-title">
+                    <i class="fas fa-ruler-combined"></i>
+                    Geodesic Distance Visualization
+                </div>
+                <div class="instructions">
+                    Click the button below to visualize geodesic distances with curvature penalties.
+                </div>
+                <div class="control-group">
+                    <label><i class="fas fa-wave-square"></i> Curvature Penalty Strength</label>
+                    <input type="number" id="geodesicCurvaturePenalty" value="100" step="0.1" min="0" max="1000">
+                </div>
+                <button class="btn-primary" onclick="visualizeGeodesicWithPenalty()">
+                    <i class="fas fa-eye"></i> Visualize Geodesic Distance
+                </button>
+            </div>
         </div>
         
         <div id="viewer">
@@ -206,5 +277,63 @@
 
     <script src="https://unpkg.com/three@0.155.0/build/three.min.js"></script>
     <script src="/static/app.js"></script>
+
+    <script>
+    function visualizeGeodesicWithPenalty() {
+        const curvaturePenalty = parseFloat(document.getElementById('geodesicCurvaturePenalty').value);
+
+        fetch('/visualize_geodesic_with_penalty', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                curvature_penalty_strength: curvaturePenalty
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const visualizationData = data.visualization_data;
+                const faceCenters = visualizationData.face_centers;
+                const distances = visualizationData.distances;
+
+                // Log data for debugging
+                console.log('Face Centers:', faceCenters.slice(0, 10));
+                console.log('Distances:', distances.slice(0, 10));
+
+                // Normalize distances for visualization
+                const normalizedDistances = distances.map(d => (d - Math.min(...distances)) / (Math.max(...distances) - Math.min(...distances)));
+
+                // Render visualization in the viewer
+                const viewer = document.getElementById('viewer');
+                viewer.innerHTML = ''; // Clear previous visualization
+
+                const canvas = document.createElement('canvas');
+                canvas.width = viewer.offsetWidth;
+                canvas.height = viewer.offsetHeight;
+                viewer.appendChild(canvas);
+
+                const ctx = canvas.getContext('2d');
+
+                faceCenters.forEach((center, index) => {
+                    const x = center[0] * canvas.width / 10;
+                    const y = center[1] * canvas.height / 10;
+                    const colorValue = Math.floor(normalizedDistances[index] * 255);
+                    ctx.fillStyle = `rgb(${colorValue}, ${255 - colorValue}, 0)`;
+                    ctx.fillRect(x, y, 2, 2);
+                });
+
+                console.log('Visualization rendered successfully.');
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while visualizing geodesic distances.');
+        });
+    }
+    </script>
 </body>
 </html>

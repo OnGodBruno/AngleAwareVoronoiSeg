@@ -10,7 +10,7 @@
         let renderErrorCount = 0;
         let maxRenderErrors = 10;
         let currentSeedColor = 'red'; // Default seed color
-        let segmentationMode = 'manual'; // 'manual' or 'automatic'
+        let segmentationMode = 'manual'; // 'manual', 'automatic', or 'geodesic'
         
         // Color mapping for seeds
         const seedColors = {
@@ -234,29 +234,127 @@
         
         function setSegmentationMode(mode) {
             segmentationMode = mode;
-            
+        
             const manualBtn = document.getElementById('manualModeBtn');
             const automaticBtn = document.getElementById('automaticModeBtn');
+            const geodesicBtn = document.getElementById('geodesicModeBtn');
+        
             const manualControls = document.getElementById('manualControls');
             const automaticControls = document.getElementById('automaticControls');
-            
+            const geodesicControls = document.getElementById('geodesicControls');
+        
+            // Reset all buttons and hide all panels
+            [manualBtn, automaticBtn, geodesicBtn].forEach(btn => btn.classList.remove('active'));
+            [manualControls, automaticControls, geodesicControls].forEach(panel => panel.style.display = 'none');
+        
             if (mode === 'manual') {
                 manualBtn.classList.add('active');
-                automaticBtn.classList.remove('active');
                 manualControls.style.display = 'block';
-                automaticControls.style.display = 'none';
                 seedSelectionMode = true;
-            } else {
-                manualBtn.classList.remove('active');
+            } else if (mode === 'automatic') {
                 automaticBtn.classList.add('active');
-                manualControls.style.display = 'none';
                 automaticControls.style.display = 'block';
                 seedSelectionMode = false;
                 clearSeeds();
+            } else if (mode === 'geodesic') {
+                geodesicBtn.classList.add('active');
+                geodesicControls.style.display = 'block';
+                seedSelectionMode = false; // Disable seed placement
+            }
+        
+            updateSegmentButtonState();
+            showStatus(`Switched to ${mode} mode`, 'info');
+        }
+
+        async function autoPlaceSeeds() {
+            console.log('autoPlaceSeeds function called!');
+            console.log('meshObject:', meshObject);
+            console.log('meshData:', meshData);
+            
+            if (!meshObject || !meshData) {
+                console.log('No mesh loaded - showing error');
+                showStatus('Please load a mesh first', 'error');
+                return;
             }
             
-            updateSegmentButtonState();
-            showStatus(`Switched to ${mode} segmentation mode`, 'info');
+            const autoSeedCount = parseInt(document.getElementById('autoSeedCount').value);
+            
+            if (autoSeedCount < 1 || autoSeedCount > 20) {
+                showStatus('Number of seeds must be between 1 and 20', 'error');
+                return;
+            }
+            
+            showLoading(true);
+            showStatus(`Automatically placing ${autoSeedCount} optimal seeds...`, 'info');
+            updateDebugInfo('Running automatic seed placement algorithm...');
+            
+            try {
+                const response = await fetch('/auto_place_seeds', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        num_seeds: autoSeedCount
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Clear existing seeds first
+                    clearSeeds();
+                    
+                    // Add the automatically placed seeds
+                    const colors = ['red', 'green', 'blue', 'yellow', 'magenta', 'cyan', 'orange', 'purple'];
+                    
+                    for (let i = 0; i < result.seed_positions.length; i++) {
+                        const position = result.seed_positions[i];
+                        const color = colors[i % colors.length];
+                        
+                        // Add seed with position and color
+                        const seedData = {
+                            position: position,
+                            color: color,
+                            colorRGB: seedColors[color]
+                        };
+                        selectedSeeds.push(seedData);
+                        
+                        // Add visual marker
+                        const geometry = new THREE.SphereGeometry(0.04, 16, 16);
+                        const colorRGB = seedColors[color];
+                        const material = new THREE.MeshLambertMaterial({ 
+                            color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
+                            opacity: 0.9,
+                            transparent: true,
+                            emissive: new THREE.Color(colorRGB[0] * 0.2, colorRGB[1] * 0.2, colorRGB[2] * 0.2),
+                            emissiveIntensity: 0.3
+                        });
+                        const marker = new THREE.Mesh(geometry, material);
+                        marker.position.set(position[0], position[1], position[2]);
+                        marker.userData = { 
+                            isSeedMarker: true, 
+                            seedIndex: selectedSeeds.length - 1,
+                            seedColor: color
+                        };
+                        scene.add(marker);
+                    }
+                    
+                    updateSeedDisplay();
+                    updateSegmentButtonState();
+                    
+                    showStatus(`✨ Successfully placed ${result.seed_positions.length} optimal seeds using curvature analysis and distance optimization!`, 'success');
+                    updateDebugInfo(`Auto-placed ${result.seed_positions.length} seeds: ${result.algorithm_info}`);
+                } else {
+                    showStatus(`Error placing seeds: ${result.error}`, 'error');
+                    updateDebugInfo('Auto-seed placement failed: ' + result.error);
+                }
+            } catch (error) {
+                showStatus(`Network error: ${error.message}`, 'error');
+                updateDebugInfo('Auto-seed placement network error: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
         }
 
         function updateSegmentButtonState() {
@@ -282,30 +380,31 @@
         }
         
         function onMouseClick(event) {
-            // Only handle clicks in manual mode
-            if (segmentationMode !== 'manual') {
-                return;
-            }
-            
             if (!meshObject || controls.isUserInteracting) {
                 return;
             }
-            
+        
             const viewer = document.getElementById('viewer');
             const rect = viewer.getBoundingClientRect();
-            
+        
             mouse.x = ((event.clientX - rect.left) / viewer.clientWidth) * 2 - 1;
             mouse.y = -((event.clientY - rect.top) / viewer.clientHeight) * 2 + 1;
-            
+        
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObject(meshObject);
-            
+        
             if (intersects.length > 0) {
                 const point = intersects[0].point;
-                updateDebugInfo(`Seed click detected at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
-                addSeed(point.x, point.y, point.z);
+        
+                if (segmentationMode === 'manual') {
+                    updateDebugInfo(`Seed click detected at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
+                    addSeed(point.x, point.y, point.z);
+                } else if (segmentationMode === 'geodesic') {
+                    updateDebugInfo(`Geodesic visualization click at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
+                    visualizeGeodesicDistance(point);
+                }
             } else {
-                updateDebugInfo('No intersection found during seed click');
+                updateDebugInfo('No intersection found on click');
             }
         }
         
@@ -398,7 +497,15 @@
                     updateDebugInfo(`Valid mesh data: ${result.vertices.length} vertices, ${result.faces.length} faces`);
                     
                     displayMesh(result);
-                    showStatus(`🚀 Mesh uploaded and loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
+                    
+                    // Display curvature penalty information if available
+                    let statusMessage = `🚀 Mesh uploaded and loaded successfully! ${result.total_faces} faces ready for analysis.`;
+                    if (result.curvature_stats) {
+                        const stats = result.curvature_stats;
+                        statusMessage += ` Curvature penalty applied (strength: ${stats.strength}) - Min: ${stats.min.toFixed(3)}, Max: ${stats.max.toFixed(3)}, Mean: ${stats.mean.toFixed(3)}`;
+                    }
+                    showStatus(statusMessage, 'success');
+                    
                     clearSeeds();
                     updateSegmentButtonState();
                 } else {
@@ -492,7 +599,15 @@
                     updateDebugInfo(`Valid mesh data: ${result.vertices.length} vertices, ${result.faces.length} faces`);
                     
                     displayMesh(result);
-                    showStatus(`🚀 Mesh loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
+                    
+                    // Display curvature penalty information if available
+                    let statusMessage = `🚀 Mesh loaded successfully! ${result.total_faces} faces ready for analysis.`;
+                    if (result.curvature_stats) {
+                        const stats = result.curvature_stats;
+                        statusMessage += ` Curvature penalty applied (strength: ${stats.strength}) - Min: ${stats.min.toFixed(3)}, Max: ${stats.max.toFixed(3)}, Mean: ${stats.mean.toFixed(3)}`;
+                    }
+                    showStatus(statusMessage, 'success');
+                    
                     clearSeeds();
                     updateSegmentButtonState();
                 } else {
@@ -758,7 +873,7 @@
             // Remove visual markers from scene
             const markersToRemove = [];
             scene.traverse((child) => {
-                if (child.userData && child.userData.isSeedMarker) {
+                if (child.userData && (child.userData.isSeedMarker || child.userData.isRingMarker)) {
                     markersToRemove.push(child);
                 }
             });
@@ -818,7 +933,7 @@
 
             if (selectedSeeds.length === 0) {
                 seedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); font-style: italic;">No seeds selected</div>';
-                
+            } else {
                 // Group seeds by color for display
                 const seedsByColor = {};
                 selectedSeeds.forEach((seed, index) => {
@@ -952,6 +1067,41 @@
             }
         }
         
+        async function visualizeGeodesicDistance(point) {
+            if (!meshObject) {
+                showStatus('Please load a mesh first', 'error');
+                return;
+            }
+        
+            showLoading(true);
+            showStatus('Calculating geodesic distances...', 'info');
+        
+            try {
+                const response = await fetch('/visualize_geodesic_distance', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        clicked_point: [point.x, point.y, point.z]
+                    })
+                });
+        
+                const result = await response.json();
+        
+                if (result.success) {
+                    displaySegmentedMesh(result.face_colors);
+                    showStatus('Geodesic distance visualization complete.', 'success');
+                } else {
+                    showStatus(`Error visualizing distance: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Network error: ${error.message}`, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
         function displaySegmentedMesh(faceColors) {
             if (!meshObject || !meshData) {
                 updateDebugInfo('ERROR: No mesh object or data available for segmentation display');
@@ -1045,6 +1195,38 @@
             }
         }
         
+        async function updatePenaltyStrength() {
+            if (!meshObject) {
+                return; // No mesh loaded, nothing to update
+            }
+
+            const newPenalty = parseFloat(document.getElementById('curvaturePenalty').value);
+            showStatus(`Updating curvature penalty to ${newPenalty}...`, 'info');
+
+            try {
+                const response = await fetch('/update_penalty', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        curvature_penalty_strength: newPenalty
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus(`✅ Penalty strength updated. The graph has been rebuilt.`, 'success');
+                    updateDebugInfo(`Graph rebuilt with new penalty: ${newPenalty}`);
+                } else {
+                    showStatus(`Error updating penalty: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`Network error while updating penalty: ${error.message}`, 'error');
+            }
+        }
+
         function downloadSegments() {
             const outputDir = document.getElementById('outputDir').value;
             window.open(`/download_segments?output_dir=${encodeURIComponent(outputDir)}`, '_blank');
@@ -1053,6 +1235,12 @@
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
             updateDebugInfo('DOM loaded, initializing...');
+
+            // Add listener for curvature penalty changes
+            const penaltyInput = document.getElementById('curvaturePenalty');
+            if (penaltyInput) {
+                penaltyInput.addEventListener('change', updatePenaltyStrength);
+            }
 
             // Update n_seeds display when input changes
             const nSeedsInput = document.getElementById('nSeeds');
@@ -1094,3 +1282,122 @@
                 }
             }, 100);
         });
+        
+        async function facilityPlaceSeeds() {
+            console.log('facilityPlaceSeeds function called!');
+            
+            if (!meshObject || !meshData) {
+                showStatus('Please load a mesh first', 'error');
+                return;
+            }
+            
+            const numSeeds = parseInt(document.getElementById('facilitySeeds').value);
+            const strategy = document.getElementById('facilityStrategy').value;
+            
+            if (numSeeds < 1 || numSeeds > 20) {
+                showStatus('Number of seeds must be between 1 and 20', 'error');
+                return;
+            }
+            
+            showLoading(true);
+            showStatus(`Running facility placement algorithm with ${numSeeds} seeds using ${strategy} strategy...`, 'info');
+            updateDebugInfo(`Facility placement: ${numSeeds} seeds, strategy: ${strategy}`);
+            
+            try {
+                const response = await fetch('/facility_place_seeds', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        num_seeds: numSeeds,
+                        strategy: strategy
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Clear existing seeds first
+                    clearSeeds();
+                    
+                    // Add the facility-placed seeds with their assigned colors
+                    for (let i = 0; i < result.seeds.length; i++) {
+                        const seedData = result.seeds[i];
+                        const position = seedData.position;
+                        const color = seedData.color;
+                        
+                        // Add seed with position and color
+                        const seed = {
+                            position: position,
+                            color: color,
+                            colorRGB: seedColors[color] || [0.5, 0.5, 0.5]
+                        };
+                        selectedSeeds.push(seed);
+                        
+                        // Add visual marker
+                        const geometry = new THREE.SphereGeometry(0.05, 20, 20);
+                        const colorRGB = seed.colorRGB;
+                        
+                        // Create a more prominent material for facility-placed seeds
+                        const material = new THREE.MeshLambertMaterial({ 
+                            color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
+                            opacity: 0.95,
+                            transparent: true,
+                            emissive: new THREE.Color(colorRGB[0] * 0.3, colorRGB[1] * 0.3, colorRGB[2] * 0.3),
+                            emissiveIntensity: 0.4
+                        });
+                        
+                        const marker = new THREE.Mesh(geometry, material);
+                        marker.position.set(position[0], position[1], position[2]);
+                        
+                        // Add a subtle ring around facility-placed seeds to distinguish them
+                        const ringGeometry = new THREE.RingGeometry(0.06, 0.08, 16);
+                        const ringMaterial = new THREE.MeshBasicMaterial({ 
+                            color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
+                            opacity: 0.6,
+                            transparent: true,
+                            side: THREE.DoubleSide
+                        });
+                        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                        ring.position.set(position[0], position[1], position[2]);
+                        ring.lookAt(camera.position); // Face the camera
+                        scene.add(ring);
+                        
+                        marker.userData = { 
+                            isSeedMarker: true, 
+                            seedIndex: selectedSeeds.length - 1,
+                            seedColor: color,
+                            isFacilityPlaced: true,
+                            ringMarker: ring
+                        };
+                        ring.userData = {
+                            isRingMarker: true,
+                            parentSeed: marker
+                        };
+                        
+                        scene.add(marker);
+                    }
+                    
+                    updateSeedDisplay();
+                    updateSegmentButtonState();
+                    
+                    showStatus(`🎯 Facility placement complete! ${result.num_seeds_placed} seeds optimally placed using ${result.strategy_used} algorithm. ${result.algorithm_info}`, 'success');
+                    updateDebugInfo(`Facility placement successful: ${result.num_seeds_placed} seeds using ${result.strategy_used}`);
+                } else {
+                    showStatus(`Error in facility placement: ${result.error}`, 'error');
+                    updateDebugInfo('Facility placement failed: ' + result.error);
+                }
+            } catch (error) {
+                showStatus(`Network error: ${error.message}`, 'error');
+                updateDebugInfo('Facility placement network error: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Make functions globally accessible for debugging
+        window.autoPlaceSeeds = autoPlaceSeeds;
+        window.facilityPlaceSeeds = facilityPlaceSeeds;
+        window.loadMesh = loadMesh;
+        window.uploadMesh = uploadMesh;
