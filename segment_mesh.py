@@ -32,11 +32,11 @@ def smooth_normals(mesh, k:int=3, sigma_deg: float | None = 25.0):
         mesh: A mesh object with attributes `faces`, `face_normals`,
               and `face_adjacency` (e.g., a trimesh.Trimesh).
         k (int): Number of smoothing iterations to apply (default: 3).
-        sigma_deg (float | None): Standard deviation of the bilateral Gaussian
-            in degrees. If set, large angular differences between normals
-            reduce the smoothing weight, preserving sharp edges. If None,
-            all neighbors contribute equally.
-
+        sigma_deg (float | None): Std. dev. σ of bilateral Gaussian in degrees. 
+            For angle θ between normals: w = exp(-(θ²)/(2σ²)).
+            Small σ → preserves sharp edges (weights ~0 if θ large). 
+            Large σ → smooths across edges (weights ~1). 
+             Valid range: 0 < σ ≤ 180, or None to disable.
     Returns:
         (ndarray): Array of shape (n_faces, 3) with smoothed, unit-length
         face normals.
@@ -163,7 +163,7 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal
         sin = sign * sin_mag
         cos = np.einsum('ij,ij->i', n1s, n2s).clip(-1, 1)
     else:
-         # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
+        # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
         cos = np.einsum('ij,ij->i', n1r, n2r).clip(-1, 1)
         sin = np.einsum('ij,ij->i', np.cross(n1r, n2r), hv)
     
@@ -176,7 +176,7 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal
     valley_scores = np.zeros(len(adj), dtype=float)
     valley_scores[mask_ok] = valley_valid
     
-    return valley_scores.reshape(-1, 1)
+    return valley_scores.reshape(-1, 1).ravel()
     
    
 
@@ -184,8 +184,7 @@ def get_valley_faces(mesh, angle_threshold_deg=20.0):
     """Find faces that have at least one valley edge."""
     valley_scores = find_valleys(mesh, angle_threshold_deg, p=2.0, normal_smoothing=True)
     
-    valley_scores_1d = valley_scores.ravel() 
-    valley_edges_mask = valley_scores_1d > 0.0   
+    valley_edges_mask = valley_scores > 0.0   
     
     valley_face_pairs = mesh.face_adjacency[valley_edges_mask]
     
@@ -198,7 +197,7 @@ def get_valley_faces(mesh, angle_threshold_deg=20.0):
     # Get scores for visualization (max valley score for each face)
     face_scores = np.zeros(len(mesh.faces), dtype=float)
     for i, (f1, f2) in enumerate(mesh.face_adjacency):
-        s = valley_scores_1d[i]
+        s = valley_scores[i]
         if s > 0.0:
             if s > face_scores[f1]:
                 face_scores[f1] = s
@@ -208,7 +207,7 @@ def get_valley_faces(mesh, angle_threshold_deg=20.0):
     return valley_face_mask, face_scores
   
     
-def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
+def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None, valley_barrier_alpha: float = 20.0):
     """
     Builds a face adjacency graph with curvature-aware edge weights.
 
@@ -244,8 +243,20 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     # Penalties
     curvature_penalty = np.exp(curvature_penalty_strength * angle)
     spatial_penalty = 1 + (spatial_dist / avg_edge_length )**2
+    
+    base_weights = spatial_penalty + curvature_penalty
 
-    weights = spatial_penalty + curvature_penalty
+    
+    valley = find_valleys(mesh, angle_threshold_deg=20.0,
+                          p=2.0, normal_smoothing=True)
+
+    eps = 1e-6
+    
+    tau = float(valley_barrier_alpha) * float(np.median(base_weights)) if base_weights.size else float(valley_barrier_alpha)
+    barrier = tau * (valley / (1.0 - valley + eps))
+
+
+    weights = base_weights + barrier
 
     row = adj[:, 0]
     col = adj[:, 1]
