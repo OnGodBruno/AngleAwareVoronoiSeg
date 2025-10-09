@@ -542,7 +542,7 @@ def segment_with_colored_seeds():
         # Rebuild graph with user seed information
         print("Rebuilding graph with colored user seeds...")
         current_sparse_matrix, current_face_centers = build_adjacency_graph(
-            current_mesh, current_curvature_penalty, user_seeds=seed_face_indices
+            current_mesh, current_curvature_penalty, user_seeds=seed_face_indices, mode='segmentation'
         )
         
         # Create seed indices array for the matrix
@@ -639,7 +639,7 @@ def segment_automatic():
         
         # Build adjacency graph without user seeds for automatic selection
         current_sparse_matrix, current_face_centers = build_adjacency_graph(
-            current_mesh, current_curvature_penalty, user_seeds=None
+            current_mesh, current_curvature_penalty, user_seeds=None, mode='segmentation'
         )
         
         # Use the automatic seed selection from segment_mesh.py
@@ -767,7 +767,7 @@ def segment_with_seeds():
         # Always use enhanced mode with user seeds to improve segmentation quality
         print("Rebuilding graph with user seed information for enhanced segmentation...")
         current_sparse_matrix, current_face_centers = build_adjacency_graph(
-            current_mesh, current_curvature_penalty, user_seeds=seed_face_indices
+            current_mesh, current_curvature_penalty, user_seeds=seed_face_indices, mode='segmentation'
         )
         print(f"Enhanced graph rebuilt with {len(seed_face_indices)} user seeds")
         
@@ -1017,9 +1017,9 @@ def facility_place_seeds():
         except ImportError:
             return jsonify({'success': False, 'error': 'Facility placement module not available'})
         
-        # Build adjacency graph with penalties
+        # Build adjacency graph with penalties (using facility placement mode)
         penalty_matrix, face_centers = build_adjacency_graph(
-            current_mesh, current_curvature_penalty, user_seeds=None
+            current_mesh, current_curvature_penalty, user_seeds=None, mode='facility_placement'
         )
         
         # Get face centers for spatial algorithms

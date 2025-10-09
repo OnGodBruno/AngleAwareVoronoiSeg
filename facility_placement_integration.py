@@ -50,7 +50,7 @@ def improved_auto_place_optimal_seeds(mesh, curvature_penalty_strength, num_seed
         from segment_mesh import build_adjacency_graph
         
         sparse_matrix, face_centers = build_adjacency_graph(
-            mesh, curvature_penalty_strength, user_seeds=None
+            mesh, curvature_penalty_strength, user_seeds=None, mode='facility_placement'
         )
         
         print(f"Built adjacency graph: {sparse_matrix.shape[0]} faces, {sparse_matrix.nnz} edges")

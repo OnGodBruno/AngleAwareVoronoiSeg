@@ -33,7 +33,7 @@ def example_automatic_placement():
         curvature_penalty_strength = 100.0
         print(f"Building adjacency graph with curvature penalty: {curvature_penalty_strength}")
         sparse_matrix, face_centers = build_adjacency_graph(
-            mesh, curvature_penalty_strength, user_seeds=None
+            mesh, curvature_penalty_strength, user_seeds=None, mode='facility_placement'
         )
         print(f"Built graph: {sparse_matrix.shape[0]} faces, {sparse_matrix.nnz} edges")
         
@@ -103,7 +103,7 @@ def integration_example():
         
         print(f"Building adjacency graph for {num_seeds} seeds...")
         sparse_matrix, face_centers = build_adjacency_graph(
-            mesh, curvature_penalty_strength, user_seeds=None
+            mesh, curvature_penalty_strength, user_seeds=None, mode='facility_placement'
         )
         
         # Use the new automatic seed placement
