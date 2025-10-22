@@ -161,7 +161,7 @@ def upload_mesh():
             
             # Get valley faces for visualization
             from segment_mesh import get_valley_faces
-            valley_face_mask, valley_scores = get_valley_faces(current_mesh, angle_threshold_deg=20.0)
+            valley_face_mask, valley_scores = get_valley_faces(current_mesh)
             current_valley_faces = valley_face_mask
             current_valley_scores = valley_scores
             
@@ -227,7 +227,7 @@ def load_mesh():
         
         # Get valley faces for visualization
         from segment_mesh import get_valley_faces
-        valley_face_mask, valley_scores = get_valley_faces(current_mesh, angle_threshold_deg=20.0)
+        valley_face_mask, valley_scores = get_valley_faces(current_mesh)
         current_valley_faces = valley_face_mask
         current_valley_scores = valley_scores
         

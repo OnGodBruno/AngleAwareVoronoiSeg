@@ -5,6 +5,7 @@ from scipy.sparse import csgraph
 import scipy.sparse as sparse
 import os
 import argparse
+from collections import deque
 
 import time # Debug
     
@@ -87,7 +88,73 @@ def smooth_normals(mesh, k:int=3, sigma_deg: float | None = 25.0):
     return N
 
 
-def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal_smoothing: bool = True) -> np.ndarray:
+import numpy as np
+from scipy.sparse import csr_matrix, csgraph
+
+import numpy as np
+from scipy.sparse import csr_matrix, csgraph
+
+def find_valley_edge_components(mesh, edge_mask):
+    """
+    Finde Komponenten im Kanten-Subgraph (Nodes = valley edges).
+    Rückgabe:
+      components: list[np.ndarray]  # Edge-Indizes (im face_adjacency)
+      endpoints:  list[np.ndarray]  # Submengen pro Komponente (Grad <= 1)
+    """
+    FA = mesh.face_adjacency
+    sub_idx = np.flatnonzero(edge_mask)
+    if sub_idx.size == 0:
+        return [], []
+
+    F = FA[sub_idx]
+    f0, f1 = F[:, 0], F[:, 1]
+
+    faces = np.concatenate([f0, f1])
+    edges = np.concatenate([np.arange(sub_idx.size)] * 2)
+    order = np.argsort(faces, kind="mergesort")
+    faces_s, edges_s = faces[order], edges[order]
+
+    # group borders
+    bounds = np.flatnonzero(np.diff(faces_s)) + 1
+    starts = np.concatenate(([0], bounds))
+    stops  = np.concatenate((bounds, [faces_s.size]))
+
+    # connect valley edges sharing a face
+    rows, cols = [], []
+    for a, b in zip(starts, stops):
+        grp = edges_s[a:b]
+        if grp.size <= 1:
+            continue
+        ii = np.repeat(grp, grp.size - 1) # to connect every edge with every other edge in the group
+        jj = np.concatenate([np.delete(grp, i) for i in range(grp.size)])
+        rows.append(ii)
+        cols.append(jj)
+    if rows:
+        rows = np.concatenate(rows)
+        cols = np.concatenate(cols)
+        data = np.ones(rows.size, dtype=bool)
+        A = csr_matrix((data, (rows, cols)), shape=(sub_idx.size, sub_idx.size))
+    else:
+        A = csr_matrix((sub_idx.size, sub_idx.size), dtype=bool)
+
+    # components
+    _, labels = csgraph.connected_components(A, directed=False, return_labels=True)
+
+    components = []
+    endpoints = []
+    for lab in np.unique(labels):
+        comp_edges = sub_idx[labels == lab]
+        components.append(comp_edges)
+
+        # deg[i] = number of neighbors of edge i
+        deg = np.array(A[labels == lab][:, labels == lab].sum(1)).ravel()
+        endpoints.append(comp_edges[deg <= 1])
+
+    return components, endpoints
+
+    
+
+def find_valleys(mesh, normal_smoothing: bool = True) -> np.ndarray:
     """
     Finds concave edges by calculating the hinge vector and comparing it to the cross product of the normals. Calculates a valley score for each edge.
     valley_score = ((-theta - angle_threshold_degree) / (180 - angle_threshold_degree))^p for theta < -angle_threshold_degree else 0.0
@@ -167,26 +234,97 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal
         cos = np.einsum('ij,ij->i', n1r, n2r).clip(-1, 1)
         sin = np.einsum('ij,ij->i', np.cross(n1r, n2r), hv)
     
-    theta_deg = np.degrees(np.arctan2(sin, cos)) # range [-180°, 180°]
-
-    denom = max(1e-9, (180.0 - angle_threshold_deg)) # avoid division by zero
-    sharp = np.clip(((-theta_deg) - angle_threshold_deg) / denom, 0.0, 1.0)
-    valley_valid = np.where(theta_deg < -angle_threshold_deg, np.power(sharp, p), 0.0)
-
+    theta_deg = np.degrees(np.arctan2(sin, cos))
+    theta_min = 5.0
+    cap = 160.0
+    neg = np.where(theta_deg < -theta_min, -theta_deg, 0.0)
+    valley_valid = np.clip(neg, 0.0, cap) / cap
     valley_scores = np.zeros(len(adj), dtype=float)
     valley_scores[mask_ok] = valley_valid
     
-    return valley_scores.reshape(-1, 1).ravel()
+    
+    def build_edge_neighbors(mesh):
+        adj = mesh.face_adjacency
+        E = len(adj)
+        ev = mesh.face_adjacency_edges              # (E,2) Vertexpaare
+        # Vertex-Nachbarn
+        v2e = {}
+        for ei,(va,vb) in enumerate(ev):
+            v2e.setdefault(va, []).append(ei)
+            v2e.setdefault(vb, []).append(ei)
+        nbr = [set() for _ in range(E)]
+        for lst in v2e.values():
+            for i in lst:
+                for j in lst:
+                    if i!=j: nbr[i].add(j)
+        # Face-Nachbarn
+        f2e = {}
+        for ei,(f0,f1) in enumerate(adj):
+            f2e.setdefault(f0, []).append(ei)
+            f2e.setdefault(f1, []).append(ei)
+        for lst in f2e.values():
+            for i in lst:
+                for j in lst:
+                    if i!=j: nbr[i].add(j)
+        return [np.fromiter(s, dtype=int) if s else np.empty(0,dtype=int) for s in nbr]
+
+    def hysteresis(valley_scores, edge_neighbors, T_low, T_high):
+        strong = valley_scores >= T_high
+        weak = valley_scores >= T_low
+        mask = np.zeros_like(valley_scores, dtype=bool)
+        dq = deque(np.flatnonzero(strong))
+        while dq:
+            e = dq.pop()
+            if mask[e]: 
+                continue
+            mask[e] = True
+            for nb in edge_neighbors[e]:
+                if weak[nb] and not mask[nb]:
+                    dq.append(nb)
+        return mask
+    
+    edge_neighbors = build_edge_neighbors(mesh)
+    valley_mask = hysteresis(valley_scores, edge_neighbors, T_low=0.12, T_high=0.32)
+    return valley_scores, valley_mask
+
     
    
 
-def get_valley_faces(mesh, angle_threshold_deg=20.0):
+def get_valley_faces(mesh):
     """Find faces that have at least one valley edge."""
-    valley_scores = find_valleys(mesh, angle_threshold_deg, p=2.0, normal_smoothing=True)
+    valley_scores, valley_mask = find_valleys(mesh, normal_smoothing=False)
+    print(f"Found {len(valley_scores[valley_scores > 0.0])} valley edges out of {len(valley_scores)} total edges.") # DEBUG
     
-    valley_edges_mask = valley_scores > 0.0   
+    # --- DEBUG: Valley-Score-Statistik ---
+    print(f"ValleyScores: min={valley_scores.min():.6f}, max={valley_scores.max():.6f}, mean={valley_scores.mean():.6f}, >0 count={valley_mask.sum()}/{valley_scores.size}")
+    if valley_mask.any():
+        print(f"ValleyScores (>0): min={valley_scores[valley_mask].min():.6f}, max={valley_scores[valley_mask].max():.6f}, mean={valley_scores[valley_mask].mean():.6f}")
+    else:
+        print("ValleyScores (>0): keine positiven Werte")
+    # --------------------------------------
     
-    valley_face_pairs = mesh.face_adjacency[valley_edges_mask]
+    components, endpoints = find_valley_edge_components(mesh, valley_mask)
+    print(f"Found {len(components)} connected components of valley edges.") # DEBUG
+    
+    #-------------DEBUG-----------------
+    endpoints = find_valley_edge_components(mesh, valley_mask)[1]
+
+    ep_counts   = np.array([len(ep) for ep in endpoints], dtype=int)
+    comp_counts = np.array([len(c)  for c  in components], dtype=int)
+
+    if ep_counts.size:
+        print(f"Endpoints per group: mean={ep_counts.mean():.2f}, min={ep_counts.min()}, max={ep_counts.max()}")
+    else:
+        print("No endpoints found.")
+
+    if comp_counts.size:
+        print(f"Edges per group:    mean={comp_counts.mean():.2f}, min={comp_counts.min()}, max={comp_counts.max()}")
+    else:
+        print("No edge components found.")
+    #-----------------------------------
+    
+    
+    valley_face_pairs = mesh.face_adjacency[valley_mask]
     
     valley_faces = np.unique(valley_face_pairs.reshape(-1))
     
@@ -247,16 +385,17 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None, val
     base_weights = spatial_penalty + curvature_penalty
 
     
-    valley = find_valleys(mesh, angle_threshold_deg=20.0,
-                          p=2.0, normal_smoothing=True)
+    valley, _ = find_valleys(mesh, normal_smoothing=True)
 
     eps = 1e-6
     
     tau = float(valley_barrier_alpha) * float(np.median(base_weights)) if base_weights.size else float(valley_barrier_alpha)
-    barrier = tau * (valley / (1.0 - valley + eps))
+    barrier = tau * (valley / (1.0 - valley + eps))*1000
 
 
-    weights = base_weights + barrier
+    # weights = base_weights + barrier
+    weights = 1 + barrier
+    
 
     row = adj[:, 0]
     col = adj[:, 1]
