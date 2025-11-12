@@ -20,8 +20,7 @@ def load_and_clean_mesh(mesh_path):
     return mesh
 
 
-def get_valley_faces(mesh, valley_threshold=0.1, connection_runs=5, 
-                     curvature_penalty_strength=100.0):
+def get_valley_faces(mesh, valley_threshold=0.1, connection_runs=5, curvature_penalty_strength=100.0):
     """Find faces that have at least one valley edge.
     
     Args:
@@ -38,13 +37,9 @@ def get_valley_faces(mesh, valley_threshold=0.1, connection_runs=5,
     
     # Connect components - this does EVERYTHING: find_valleys + connection
     print(f"\nConnecting components (runs={connection_runs})...")
-    valley_mask_new = cc.connect_components(
-        mesh, 
-        runs=connection_runs, 
-        curvature_penalty_strength=curvature_penalty_strength
-    )
+    valley_mask_new = cc.connect_components(mesh, runs=connection_runs, curvature_penalty_strength=curvature_penalty_strength, valley_threshold=valley_threshold)
     
-    valley_scores, _ = cc.find_valleys(mesh, normal_smoothing=False)
+    valley_scores, _ = cc.find_valleys(mesh, normal_smoothing=True, valley_threshold=valley_threshold)
     
     print(f"\nFinal valley edges: {valley_mask_new.sum()}")
 
@@ -102,12 +97,18 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
 
     spatial_dist = np.linalg.norm(p2 - p1, axis=1)
     angle = np.arccos(np.einsum('ij,ij->i', n1, n2).clip(-1, 1))
+    
+    # DEBUG VALLEY TESTING--------------------------
+    valley_mask = cc.connect_components(mesh, runs=5)
+    
+    weights = np.where(valley_mask, np.inf, 1.0)
+    #-----------------------------------------------
 
     # Penalties
-    curvature_penalty = np.exp(curvature_penalty_strength * angle)
-    spatial_penalty = 1 + (spatial_dist / avg_edge_length )**2
+    #curvature_penalty = np.exp(curvature_penalty_strength * angle)
+    #spatial_penalty = 1 + (spatial_dist / avg_edge_length )**2
 
-    weights = spatial_penalty + curvature_penalty
+    #weights = spatial_penalty + curvature_penalty
 
     row = adj[:, 0]
     col = adj[:, 1]
