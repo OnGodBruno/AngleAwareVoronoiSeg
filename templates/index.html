@@ -60,8 +60,8 @@
                 </div>
                 
                 <div class="control-group">
-                    <label><i class="fas fa-wave-square"></i> Curvature Penalty Strength</label>
-                    <input type="number" id="curvaturePenalty" value="100" step="0.1" min="0" max="1000">
+                    <label><i class="fas fa-wave-square"></i> Valley Threshold (0.0-1.0)</label>
+                    <input type="number" id="curvaturePenalty" value="0.1" step="0.05" min="0" max="1">
                 </div>
             </div>
             
@@ -149,6 +149,37 @@
                 </div>
             </div>
             
+            <!-- Facility Placement Controls -->
+            <div class="control-section">
+                <div class="section-title">
+                    <i class="fas fa-sitemap"></i>
+                    Facility Placement
+                </div>
+                <div class="instructions">
+                    Use advanced facility placement algorithms for optimal seed distribution
+                </div>
+                
+                <div class="control-group" style="margin-bottom: 16px;">
+                    <label><i class="fas fa-cogs"></i> Facility Placement Algorithm</label>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                        <input type="number" id="facilitySeeds" value="5" min="1" max="20" step="1" style="width: 80px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-primary);">
+                        <select id="facilityStrategy" style="width: 120px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-primary);">
+                            <option value="adaptive_hybrid">Adaptive</option>
+                            <option value="greedy_minimax">Greedy</option>
+                            <option value="gonzalez_approximation">Gonzalez</option>
+                            <option value="farthest_first">Farthest</option>
+                            <option value="kmeans_plus_plus">K-means++</option>
+                        </select>
+                        <button class="btn-primary" onclick="facilityPlaceSeeds()" id="facilityBtn" style="flex: 1;">
+                            <i class="fas fa-sitemap"></i> Facility Place
+                        </button>
+                    </div>
+                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                        Use advanced facility placement algorithms for optimal seed distribution
+                    </small>
+                </div>
+            </div>
+            
             <div class="control-section">
                 <div class="section-title">
                     <i class="fas fa-cogs"></i>
@@ -186,6 +217,26 @@
                         <i class="fas fa-redo"></i> Restart Render
                     </button>
                 </div>
+            </div>
+            
+            <div class="control-section">
+                <div class="section-title">
+                    <i class="fas fa-route"></i>
+                    Path Visualization
+                </div>
+                
+                <div class="seed-counter">
+                    <i class="fas fa-map-marked-alt"></i>
+                    <span>Path Points: <strong id="pathPointCount">0</strong></span>
+                </div>
+                
+                <button class="btn-primary" onclick="findDijkstraPath()" id="findPathBtn" disabled>
+                    <i class="fas fa-project-diagram"></i> Show Dijkstra Path
+                </button>
+                
+                <button class="btn-secondary" onclick="clearPathPoints()" style="margin-top: 8px;">
+                    <i class="fas fa-eraser"></i> Clear Path Points
+                </button>
             </div>
         </div>
         

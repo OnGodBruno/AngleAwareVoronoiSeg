@@ -11,7 +11,7 @@ from flask_cors import CORS
 import tempfile
 import zipfile
 from werkzeug.utils import secure_filename
-from segment_mesh import load_and_clean_mesh, build_adjacency_graph, segment_mesh, export_segment, select_seeds
+from segment_mesh import load_and_clean_mesh, build_adjacency_graph, segment_mesh, export_segment, select_seeds, find_dijkstra_path, connect_valley_lines, detect_valley_lines, extend_valley_lines_from_endpoints
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
@@ -27,8 +27,6 @@ current_sparse_matrix = None
 current_face_centers = None
 current_mesh_path = None
 current_curvature_penalty = 100.0
-current_valley_faces = None
-current_valley_scores = None
 
 @app.route('/')
 def index():
@@ -53,7 +51,8 @@ def upload_mesh():
             return jsonify({'success': False, 'error': 'Only .obj, .glb, and .gltf files are supported'})
         
         # Get parameters from form data
-        curvature_penalty_strength = float(request.form.get('curvature_penalty_strength', 100.0))
+        # NOTE: valley_threshold should be 0.0-1.0, where higher = only detect sharper valleys
+        curvature_penalty_strength = float(request.form.get('curvature_penalty_strength', 0.1))
         
         # Store settings
         current_curvature_penalty = curvature_penalty_strength
@@ -120,8 +119,9 @@ def upload_mesh():
                     return jsonify({'success': False, 'error': 'Empty mesh in GLB/GLTF file'})
                 
                 # Clean up the mesh
-                mesh.remove_duplicate_faces()
                 mesh.remove_unreferenced_vertices()
+                mesh.remove_infinite_values()
+                mesh.fix_normals()
                 
                 print(f"Converted mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
                 
@@ -159,22 +159,56 @@ def upload_mesh():
                 current_mesh, curvature_penalty_strength, user_seeds=None
             )
             
-            # Get valley faces for visualization
-            from segment_mesh import get_valley_faces
-            valley_face_mask, valley_scores = get_valley_faces(current_mesh)
-            current_valley_faces = valley_face_mask
-            current_valley_scores = valley_scores
+            # Get valley edges for visualization (this includes extensions)
+            from segment_mesh import get_valley_faces, detect_valley_lines, extend_valley_lines_from_endpoints
+            valley_edges, valley_scores_edges, attempted_extensions = get_valley_faces(current_mesh)
+            
+            # Detect valley lines and their endpoints AFTER extension
+            import connect_components as cc
+            valley_scores, valley_mask = cc.find_valleys(current_mesh, normal_smoothing=True, valley_threshold=curvature_penalty_strength)
+            
+            # First detect lines from original valleys
+            valley_lines, line_endpoints_before = detect_valley_lines(current_mesh, valley_mask, min_line_length=3)
+            
+            # Extend the valleys
+            try:
+                valley_mask_extended, attempted_ext = extend_valley_lines_from_endpoints(
+                    current_mesh, valley_mask, valley_lines, line_endpoints_before
+                )
+            except Exception as e:
+                print(f"ERROR in extend_valley_lines_from_endpoints: {e}")
+                import traceback
+                traceback.print_exc()
+                valley_mask_extended = valley_mask.copy()  # Fallback to original
+                attempted_ext = []
+            
+            # Now detect endpoints AFTER extension (to see what's still unconnected)
+            valley_lines_after, line_endpoints_after = detect_valley_lines(current_mesh, valley_mask_extended, min_line_length=3)
+            
+            print(f"Endpoints before extension: {len(line_endpoints_before)}, after extension: {len(line_endpoints_after)}")
+            
+            # Convert endpoints AFTER extension to 3D positions
+            endpoint_positions = []
+            for vertex_idx, line_idx in line_endpoints_after:
+                pos = current_mesh.vertices[vertex_idx].tolist()
+                endpoint_positions.append({
+                    'position': pos,
+                    'vertex_idx': int(vertex_idx),
+                    'line_idx': int(line_idx)
+                })
             
             # Prepare mesh data for Three.js
             vertices = current_mesh.vertices.tolist()
             faces = current_mesh.faces.tolist()
             face_centers = current_mesh.triangles_center.tolist()
             
-            # Convert valley data to lists for JSON
-            valley_faces_list = current_valley_faces.tolist() if current_valley_faces is not None else []
-            valley_scores_list = current_valley_scores.tolist() if current_valley_scores is not None else []
+            # Convert valley edge data to lists for JSON
+            # valley_edges shape: (N, 2, 3) -> list of edge pairs
+            valley_edges_list = valley_edges.tolist() if valley_edges is not None else []
+            valley_scores_list = valley_scores_edges.tolist() if valley_scores_edges is not None else []
+            # Don't send attempted extensions anymore
             
-            print(f"Converted to lists: vertices={len(vertices)}, faces={len(faces)}, centers={len(face_centers)}")
+            print(f"Converted to lists: vertices={len(vertices)}, faces={len(faces)}, centers={len(face_centers)}, valley_edges={len(valley_edges_list)}, endpoints={len(endpoint_positions)}")
             
             # Validate the data before sending
             if not vertices or not faces:
@@ -187,8 +221,9 @@ def upload_mesh():
                 'face_centers': face_centers,
                 'total_faces': len(current_mesh.faces),
                 'filename': filename,
-                'valley_faces': valley_faces_list,
-                'valley_scores': valley_scores_list
+                'valley_edges': valley_edges_list,
+                'valley_scores': valley_scores_list,
+                'valley_endpoints': endpoint_positions
             })
             
         except Exception as mesh_error:
@@ -206,7 +241,8 @@ def load_mesh():
     try:
         data = request.json
         mesh_path = data.get('mesh_path', 'input/run/example.obj')
-        curvature_penalty_strength = data.get('curvature_penalty_strength', 100.0)
+        # NOTE: valley_threshold should be 0.0-1.0, where higher = only detect sharper valleys
+        curvature_penalty_strength = data.get('curvature_penalty_strength', 0.1)
         
         # Store settings
         current_curvature_penalty = curvature_penalty_strength
@@ -225,20 +261,54 @@ def load_mesh():
             current_mesh, curvature_penalty_strength, user_seeds=None
         )
         
-        # Get valley faces for visualization
-        from segment_mesh import get_valley_faces
-        valley_face_mask, valley_scores = get_valley_faces(current_mesh)
-        current_valley_faces = valley_face_mask
-        current_valley_scores = valley_scores
+        # Get valley edges for visualization
+        from segment_mesh import get_valley_faces, detect_valley_lines, extend_valley_lines_from_endpoints
+        valley_edges, valley_scores_edges, attempted_extensions = get_valley_faces(current_mesh)
+        
+        # Detect valley lines and their endpoints AFTER extension
+        import connect_components as cc
+        valley_scores, valley_mask = cc.find_valleys(current_mesh, normal_smoothing=True, valley_threshold=curvature_penalty_strength)
+        
+        # First detect lines from original valleys
+        valley_lines, line_endpoints_before = detect_valley_lines(current_mesh, valley_mask, min_line_length=3)
+        
+        # Extend the valleys
+        try:
+            valley_mask_extended, attempted_ext = extend_valley_lines_from_endpoints(
+                current_mesh, valley_mask, valley_lines, line_endpoints_before
+            )
+        except Exception as e:
+            print(f"ERROR in extend_valley_lines_from_endpoints: {e}")
+            import traceback
+            traceback.print_exc()
+            valley_mask_extended = valley_mask.copy()  # Fallback to original
+            attempted_ext = []
+        
+        # Now detect endpoints AFTER extension (to see what's still unconnected)
+        valley_lines_after, line_endpoints_after = detect_valley_lines(current_mesh, valley_mask_extended, min_line_length=3)
+        
+        print(f"Endpoints before extension: {len(line_endpoints_before)}, after extension: {len(line_endpoints_after)}")
+        
+        # Convert endpoints AFTER extension to 3D positions
+        endpoint_positions = []
+        for vertex_idx, line_idx in line_endpoints_after:
+            pos = current_mesh.vertices[vertex_idx].tolist()
+            endpoint_positions.append({
+                'position': pos,
+                'vertex_idx': int(vertex_idx),
+                'line_idx': int(line_idx)
+            })
         
         # Prepare mesh data for Three.js
         vertices = current_mesh.vertices.tolist()
         faces = current_mesh.faces.tolist()
         face_centers = current_mesh.triangles_center.tolist()
         
-        # Convert valley data to lists for JSON
-        valley_faces_list = current_valley_faces.tolist() if current_valley_faces is not None else []
-        valley_scores_list = current_valley_scores.tolist() if current_valley_scores is not None else []
+        # Convert valley edge data to lists for JSON
+        # valley_edges shape: (N, 2, 3) -> list of edge pairs
+        valley_edges_list = valley_edges.tolist() if valley_edges is not None else []
+        valley_scores_list = valley_scores_edges.tolist() if valley_scores_edges is not None else []
+        attempted_extensions_list = attempted_extensions.tolist() if len(attempted_extensions) > 0 else []
                 
         return jsonify({
             'success': True,
@@ -246,8 +316,10 @@ def load_mesh():
             'faces': faces,
             'face_centers': face_centers,
             'total_faces': len(current_mesh.faces),
-            'valley_faces': valley_faces_list,  # 
-            'valley_scores': valley_scores_list #
+            'valley_edges': valley_edges_list,
+            'valley_scores': valley_scores_list,
+            'valley_endpoints': endpoint_positions,
+            'attempted_extensions': attempted_extensions_list
         })
         
     except Exception as e:
@@ -320,7 +392,7 @@ def segment_with_colored_seeds():
         seed_idx = np.array(seed_face_indices)
         
         # Perform segmentation
-        face_labels = segment_mesh(current_sparse_matrix, seed_idx)
+        face_labels, face_distances = segment_mesh(current_sparse_matrix, seed_idx)
         
         # Now we need to combine segments that have the same color
         print("Combining segments by color...")
@@ -343,7 +415,7 @@ def segment_with_colored_seeds():
         # Export combined segments by color
         export_combined_segments_by_color(current_mesh, color_groups, output_dir)
         
-        # Create face colors for visualization - use the same color for all faces that belong to the same color group
+        # Create face colors for visualization with gradient based on distance
         color_palette = {
             'red': [1.0, 0.0, 0.0],
             'green': [0.0, 1.0, 0.0],
@@ -359,12 +431,35 @@ def segment_with_colored_seeds():
         total_faces = len(current_mesh.faces)
         face_colors = np.full((total_faces, 3), [0.7, 0.7, 0.7], dtype=np.float32)
         
-        # Color faces by their final color group
+        # For each color group, find max distance to normalize the gradient
+        color_max_distances = {}
+        for color, face_indices in color_groups.items():
+            if face_indices:
+                distances_in_group = [face_distances.get(f, 0) for f in face_indices if np.isfinite(face_distances.get(f, np.inf))]
+                if distances_in_group:
+                    color_max_distances[color] = max(distances_in_group)
+                else:
+                    color_max_distances[color] = 1.0
+            else:
+                color_max_distances[color] = 1.0
+        
+        # Color faces by their final color group with gradient (base color at seed, fade to black at edges)
         for color, face_indices in color_groups.items():
             if color in color_palette:
-                color_rgb = color_palette[color]
+                base_color = np.array(color_palette[color])
+                max_dist = color_max_distances[color]
+                
                 for face_idx in face_indices:
-                    face_colors[face_idx] = color_rgb
+                    dist = face_distances.get(face_idx, 0)
+                    if np.isfinite(dist) and max_dist > 0:
+                        # Normalize distance to [0, 1]
+                        normalized_dist = min(dist / max_dist, 1.0)
+                        # Gradient: base_color at seed (dist=0) -> black at edges (dist=max)
+                        # t=0 -> full color, t=1 -> black
+                        face_colors[face_idx] = base_color * (1.0 - normalized_dist)
+                    else:
+                        # Unreachable or seed face - use full color
+                        face_colors[face_idx] = base_color
         
         # Convert to list format for JSON serialization
         face_colors_list = face_colors.tolist()
@@ -419,13 +514,13 @@ def segment_automatic():
         print(f"Automatically selected seed indices: {seed_idx.tolist()}")
 
         # Perform segmentation
-        face_labels = segment_mesh(current_sparse_matrix, seed_idx)
+        face_labels, face_distances = segment_mesh(current_sparse_matrix, seed_idx)
 
         # Export segments
         export_segment(current_mesh, face_labels, seed_idx, output_dir)
 
         # Color palette for visualization
-        colors = np.array([
+        base_colors = np.array([
             [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0],
             [1.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.5, 0.5, 0.5], [1.0, 0.5, 0.0],
             [0.5, 0.0, 1.0], [0.0, 0.5, 0.5], [0.8, 0.2, 0.2], [0.2, 0.8, 0.2],
@@ -439,13 +534,40 @@ def segment_automatic():
         # Map seed face -> segment index
         seed_to_segment = {int(seed): i for i, seed in enumerate(seed_idx.tolist())}
 
-        # Color segments according to the selected seed mapping
+        # Find max distance per segment for normalization
+        segment_max_distances = {}
+        for face_idx, seed_face in face_labels.items():
+            if seed_face in seed_to_segment:
+                segment_id = seed_to_segment[seed_face]
+                dist = face_distances.get(face_idx, 0)
+                if np.isfinite(dist):
+                    if segment_id not in segment_max_distances:
+                        segment_max_distances[segment_id] = dist
+                    else:
+                        segment_max_distances[segment_id] = max(segment_max_distances[segment_id], dist)
+        
+        # Set default max distance for segments without finite distances
+        for i in range(len(seed_idx)):
+            if i not in segment_max_distances:
+                segment_max_distances[i] = 1.0
+
+        # Color segments with gradient (base color at seed, fade to black at edges)
         if face_labels:
             for face_idx, seed_face in face_labels.items():
                 if seed_face in seed_to_segment:
                     segment_id = seed_to_segment[seed_face]
-                    color_idx = segment_id % len(colors)
-                    face_colors[int(face_idx)] = colors[color_idx]
+                    color_idx = segment_id % len(base_colors)
+                    base_color = base_colors[color_idx]
+                    
+                    dist = face_distances.get(face_idx, 0)
+                    max_dist = segment_max_distances.get(segment_id, 1.0)
+                    
+                    if np.isfinite(dist) and max_dist > 0:
+                        normalized_dist = min(dist / max_dist, 1.0)
+                        # Gradient from base color to black
+                        face_colors[int(face_idx)] = base_color * (1.0 - normalized_dist)
+                    else:
+                        face_colors[int(face_idx)] = base_color
 
         # JSON-serializable lists
         face_colors_list = face_colors.tolist()
@@ -459,7 +581,7 @@ def segment_automatic():
             seed_positions = []
 
         # seed colors aligned with seed order
-        seed_colors = [colors[i % len(colors)].tolist() for i in range(len(seed_face_indices))]
+        seed_colors = [base_colors[i % len(base_colors)].tolist() for i in range(len(seed_face_indices))]
 
         print(f"Automatic segmentation completed with {len(seed_face_indices)} segments")
 
@@ -562,13 +684,13 @@ def segment_with_seeds():
         seed_idx = np.array(seed_face_indices)
         
         # Perform segmentation
-        face_labels = segment_mesh(current_sparse_matrix, seed_idx)
+        face_labels, face_distances = segment_mesh(current_sparse_matrix, seed_idx)
         
         # Export segments using the corrected function name
         export_segment(current_mesh, face_labels, seed_idx, output_dir)
         
         # Create segment colors for visualization
-        colors = np.array([
+        base_colors = np.array([
             [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0],
             [1.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.5, 0.5, 0.5], [1.0, 0.5, 0.0],
             [0.5, 0.0, 1.0], [0.0, 0.5, 0.5], [0.8, 0.2, 0.2], [0.2, 0.8, 0.2]
@@ -583,16 +705,42 @@ def segment_with_seeds():
         seed_to_segment = {seed: i for i, seed in enumerate(seed_idx)}
         
         for i, seed_face in enumerate(seed_idx):
-            color_idx = i % len(colors)
-            seed_colors.append(colors[color_idx].tolist())
+            color_idx = i % len(base_colors)
+            seed_colors.append(base_colors[color_idx].tolist())
         
-        # Color segments
+        # Find max distance per segment for normalization
+        segment_max_distances = {}
+        for face_idx, seed_face in face_labels.items():
+            if seed_face in seed_to_segment:
+                segment_id = seed_to_segment[seed_face]
+                dist = face_distances.get(face_idx, 0)
+                if np.isfinite(dist):
+                    if segment_id not in segment_max_distances:
+                        segment_max_distances[segment_id] = dist
+                    else:
+                        segment_max_distances[segment_id] = max(segment_max_distances[segment_id], dist)
+        
+        # Set default for segments without distances
+        for i in range(len(seed_idx)):
+            if i not in segment_max_distances:
+                segment_max_distances[i] = 1.0
+        
+        # Color segments with gradient
         if face_labels:
             for face_idx, seed_face in face_labels.items():
                 if seed_face in seed_to_segment:
                     segment_id = seed_to_segment[seed_face]
-                    color_idx = segment_id % len(colors)
-                    face_colors[face_idx] = colors[color_idx]
+                    color_idx = segment_id % len(base_colors)
+                    base_color = base_colors[color_idx]
+                    
+                    dist = face_distances.get(face_idx, 0)
+                    max_dist = segment_max_distances.get(segment_id, 1.0)
+                    
+                    if np.isfinite(dist) and max_dist > 0:
+                        normalized_dist = min(dist / max_dist, 1.0)
+                        face_colors[face_idx] = base_color * (1.0 - normalized_dist)
+                    else:
+                        face_colors[face_idx] = base_color
         
         # Convert to list format for JSON serialization
         face_colors_list = face_colors.tolist()
@@ -619,6 +767,107 @@ def segment_with_seeds():
         print("Full traceback:", traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/find_path', methods=['POST'])
+def find_path():
+    """Find and visualize the Dijkstra path between two clicked faces."""
+    global current_mesh, current_sparse_matrix
+    
+    try:
+        data = request.json
+        clicked_points = data.get('points', [])
+        
+        if len(clicked_points) != 2:
+            return jsonify({'success': False, 'error': 'Please click exactly 2 faces'})
+        
+        if current_mesh is None or current_sparse_matrix is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+        
+        # Convert clicked points to face indices
+        face_centers = current_mesh.triangles_center
+        vertices = current_mesh.vertices
+        
+        # Calculate transformation (same as other endpoints)
+        min_coords = np.min(vertices, axis=0)
+        max_coords = np.max(vertices, axis=0)
+        center = (min_coords + max_coords) / 2
+        size = max_coords - min_coords
+        max_dim = np.max(size)
+        
+        display_scale = 4.0 / max_dim if max_dim > 0 else 1.0
+        display_center = -center
+        
+        face_indices = []
+        for point in clicked_points:
+            original_point = (np.array(point) - display_center) / display_scale
+            distances = np.linalg.norm(face_centers - original_point, axis=1)
+            closest_face_idx = np.argmin(distances)
+            face_indices.append(int(closest_face_idx))
+        
+        start_face = face_indices[0]
+        end_face = face_indices[1]
+        
+        print(f"\n=== DETAILED PATH ANALYSIS ===")
+        print(f"Finding path between faces {start_face} and {end_face}")
+        
+        # Check if there should be a valley between these faces
+        import connect_components as cc
+        valley_scores, valley_mask = cc.find_valleys(current_mesh, normal_smoothing=True, valley_threshold=current_curvature_penalty)
+        valley_mask_connected = connect_valley_lines(current_mesh, valley_mask, max_gap_distance=3)
+        
+        # Check all edges to see if any valleys separate the two regions
+        adj = current_mesh.face_adjacency
+        valleys_between = []
+        for i, (f1, f2) in enumerate(adj):
+            if valley_mask_connected[i]:
+                # This is a valley edge - check if it's between our two points
+                valleys_between.append((f1, f2, valley_scores[i]))
+        
+        print(f"Total valley edges in mesh: {valley_mask_connected.sum()}")
+        print(f"Showing first 10 valley edges: {valleys_between[:10]}")
+        print(f"=== END ANALYSIS ===\n")
+        
+        # Find the Dijkstra path
+        path, distance = find_dijkstra_path(current_sparse_matrix, start_face, end_face)
+        
+        if not path:
+            return jsonify({
+                'success': False, 
+                'error': f'No path exists between face {start_face} and face {end_face}'
+            })
+        
+        # Create face colors to highlight the path
+        total_faces = len(current_mesh.faces)
+        face_colors = np.full((total_faces, 3), [0.7, 0.7, 0.7], dtype=np.float32)
+        
+        # Color the path with a gradient from green (start) to red (end)
+        for i, face_idx in enumerate(path):
+            t = i / (len(path) - 1) if len(path) > 1 else 0.5
+            # Green to Yellow to Red gradient
+            color = np.array([t, 1.0 - t, 0.0])
+            face_colors[face_idx] = color
+        
+        # Mark start and end faces more prominently
+        face_colors[start_face] = [0.0, 1.0, 0.0]  # Bright green
+        face_colors[end_face] = [1.0, 0.0, 0.0]    # Bright red
+        
+        face_colors_list = face_colors.tolist()
+        
+        return jsonify({
+            'success': True,
+            'path': path,
+            'path_length': len(path),
+            'total_distance': distance,
+            'start_face': start_face,
+            'end_face': end_face,
+            'face_colors': face_colors_list
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error finding path: {e}")
+        print("Full traceback:", traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/download_segments')
 def download_segments():
     """Create and download a zip file containing all segment files."""
@@ -640,6 +889,103 @@ def download_segments():
         return send_file(temp_zip.name, as_attachment=True, download_name='segments.zip')
         
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/facility_place_seeds', methods=['POST'])
+def facility_place_seeds():
+    """Use facility placement algorithms to optimally place seeds on the mesh."""
+    global current_mesh, current_sparse_matrix, current_face_centers, current_curvature_penalty
+    
+    try:
+        data = request.json
+        num_seeds = data.get('num_seeds', 5)
+        strategy = data.get('strategy', 'adaptive_hybrid')
+        
+        if current_mesh is None:
+            return jsonify({'success': False, 'error': 'No mesh loaded'})
+
+        if not (1 <= num_seeds <= 20):
+            return jsonify({'success': False, 'error': 'Number of seeds must be between 1 and 20'})
+
+        print(f"Facility placement: {num_seeds} seeds using {strategy} strategy")
+        
+        # Import the facility placement function
+        try:
+            from src.services.automatic_placement import automatic_seed_placement
+        except ImportError:
+            return jsonify({'success': False, 'error': 'Facility placement module not available'})
+        
+        # Build adjacency graph with penalties
+        penalty_matrix, face_centers = build_adjacency_graph(
+            current_mesh, current_curvature_penalty, user_seeds=None
+        )
+        
+        # Get face centers for spatial algorithms
+        mesh_face_centers = current_mesh.triangles_center
+        
+        # Run facility placement algorithm
+        optimal_seed_indices = automatic_seed_placement(
+            adjacency_graph=penalty_matrix,
+            num_seeds=num_seeds,
+            face_centers=mesh_face_centers,
+            strategy=strategy,
+            max_computation_time=30.0,
+            verbose=True
+        )
+        
+        print(f"Facility placement found seeds at face indices: {optimal_seed_indices}")
+        
+        # Convert face indices to 3D positions
+        seed_positions = []
+        for face_idx in optimal_seed_indices:
+            position = mesh_face_centers[face_idx]
+            seed_positions.append(position.tolist())
+        
+        # Transform positions to display coordinate system
+        vertices = current_mesh.vertices
+        min_coords = np.min(vertices, axis=0)
+        max_coords = np.max(vertices, axis=0)
+        center = (min_coords + max_coords) / 2
+        size = max_coords - min_coords
+        max_dim = np.max(size)
+        
+        display_scale = 4.0 / max_dim if max_dim > 0 else 1.0
+        display_center = -center
+        
+        display_positions = []
+        for pos in seed_positions:
+            display_pos = (np.array(pos) + display_center) * display_scale
+            display_positions.append(display_pos.tolist())
+        
+        # Assign colors to seeds
+        color_palette = [
+            'red', 'green', 'blue', 'yellow', 'magenta', 'cyan',
+            'orange', 'purple', 'pink', 'lime', 'brown', 'teal',
+            'navy', 'maroon', 'olive', 'aqua', 'silver', 'gray',
+            'fuchsia', 'indigo'
+        ]
+        
+        colored_seeds = []
+        for i, pos in enumerate(display_positions):
+            color = color_palette[i % len(color_palette)]
+            colored_seeds.append({
+                'position': pos,
+                'color': color,
+                'face_idx': int(optimal_seed_indices[i])
+            })
+        
+        return jsonify({
+            'success': True,
+            'seeds': colored_seeds,
+            'algorithm_info': f'Facility placement using {strategy} strategy',
+            'num_seeds_placed': len(colored_seeds),
+            'strategy_used': strategy
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in facility placement: {e}")
+        print("Full traceback:", traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':

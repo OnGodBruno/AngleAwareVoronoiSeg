@@ -141,7 +141,7 @@ def find_valleys(mesh, normal_smoothing: bool = True, valley_threshold: float = 
         sin = np.einsum('ij,ij->i', np.cross(n1r, n2r), hv)
     
     theta_deg = np.degrees(np.arctan2(sin, cos))
-    theta_min = 5.0
+    theta_min = 0.0
     cap = 160.0
     neg = np.where(theta_deg < -theta_min, -theta_deg, 0.0)
     valley_valid = np.clip(neg, 0.0, cap) / cap
@@ -224,7 +224,7 @@ def find_connected_components(mesh, edge_mask):
     adj = mesh.face_adjacency    
     edge_idx = np.flatnonzero(edge_mask)
     if edge_idx.size == 0:
-        return [], []
+        return [], [], np.zeros(mesh.faces.shape[0], dtype=np.int32)
 
     sub = adj[edge_idx]
     u = sub[:, 0].astype(np.int64, copy=False)
@@ -245,45 +245,35 @@ def find_connected_components(mesh, edge_mask):
     data = np.ones(rows.shape[0], dtype=bool)
     A = csr_matrix((data, (rows, cols)), shape=(face_size, face_size), dtype=bool)
 
-
     # Gather components
     _, face_labels = csgraph.connected_components(A, directed=False, return_labels=True)
 
-    edge_comp = face_labels[ui]  
-    
-    order = np.argsort(edge_comp, kind="mergesort")
-    edge_comp_sorted = edge_comp[order]
-    edges_sorted = edge_idx[order]
-    boundaries = np.flatnonzero(np.diff(edge_comp_sorted)) + 1
-    components = [p for p in np.split(edges_sorted, boundaries) if p.size > 0]
-
+    # Pre-compute degree for all faces
     deg_face = np.zeros(mesh.faces.shape[0], dtype=np.int32)
     np.add.at(deg_face, u, 1)
     np.add.at(deg_face, v, 1)
 
+    # Pre-compute non-valley face set
     non_valley_mask = ~edge_mask
-
     if non_valley_mask.shape[0] != mesh.face_adjacency.shape[0]:
         raise ValueError("edge_mask has not the length of mesh.face_adjacency")
-
 
     face_has_nonvalley = np.zeros(mesh.faces.shape[0], dtype=bool)
     if np.any(non_valley_mask):
         adj_nv = adj[non_valley_mask]
-        u_nv = adj_nv[:, 0]
-        v_nv = adj_nv[:, 1]
-        face_has_nonvalley[u_nv] = True
-        face_has_nonvalley[v_nv] = True
+        face_has_nonvalley[adj_nv.ravel()] = True
 
-
+    # Build component-to-endpoint mapping efficiently
+    edge_comp = face_labels[ui]
+    unique_comps, comp_start_idx = np.unique(edge_comp, return_index=True)
+    
     endpoints = []
-    comp_ids_sorted = np.unique(edge_comp_sorted)
-    for comp_id in comp_ids_sorted:
+    for i, comp_id in enumerate(unique_comps):
         comp_faces = active_faces[face_labels == comp_id]
         end_faces = comp_faces[face_has_nonvalley[comp_faces]]
         endpoints.append(end_faces.astype(np.int64, copy=False))
 
-    return components, endpoints, deg_face
+    return edge_comp, endpoints, deg_face
 
 
 def get_radius_subgraph(graph, face_centers, center_point, euclidean_radius):
@@ -299,6 +289,8 @@ def get_radius_subgraph(graph, face_centers, center_point, euclidean_radius):
 
 def dijkstra_bridge_edges(mesh, graph, face_centers, endpoints_per_comp, face_to_comp, radius, search_radius_factor=2.0):
     adj = mesh.face_adjacency
+    
+    # Pre-compute edge lookup - use dictionary for memory efficiency
     f0 = np.minimum(adj[:, 0], adj[:, 1])
     f1 = np.maximum(adj[:, 0], adj[:, 1])
     pair_to_idx = {(int(a), int(b)): int(i) for i, (a, b) in enumerate(zip(f0, f1))}
@@ -321,90 +313,99 @@ def dijkstra_bridge_edges(mesh, graph, face_centers, endpoints_per_comp, face_to
     bridges_found = 0
     subgraph_radius = radius * search_radius_factor
     processed = np.zeros(endpoint_faces.size, dtype=bool)
+    
+    # Pre-compute all neighbor pairs once to avoid repeated tree queries
+    all_pairs = tree.query_pairs(r=radius, output_type='ndarray')
+    if all_pairs.size == 0:
+        print(f"  Built 0 bridges from {len(endpoint_faces)} endpoints (subgraph radius: {subgraph_radius:.4f})")
+        return new_edges_mask
+    
+    # Group pairs by component to batch process
+    comp_i = endpoint_comp_ids[all_pairs[:, 0]]
+    comp_j = endpoint_comp_ids[all_pairs[:, 1]]
+    cross_comp_mask = comp_i != comp_j
+    cross_comp_pairs = all_pairs[cross_comp_mask]
+    
+    if cross_comp_pairs.size == 0:
+        print(f"  Built 0 bridges from {len(endpoint_faces)} endpoints (subgraph radius: {subgraph_radius:.4f})")
+        return new_edges_mask
 
-    for i in range(endpoint_faces.size):
-        if processed[i]:
+    # Process unique source faces in batches to reduce Dijkstra calls
+    unique_sources = np.unique(cross_comp_pairs[:, 0])
+    num_faces = mesh.faces.shape[0]
+    
+    for src_idx in unique_sources:
+        if processed[src_idx]:
             continue
-
-        start_face = int(endpoint_faces[i])
+            
+        start_face = int(endpoint_faces[src_idx])
         subgraph, sub_to_orig = get_radius_subgraph(graph, face_centers, face_centers[start_face], subgraph_radius)
         if subgraph is None:
-            processed[i] = True
+            processed[src_idx] = True
             continue
 
-        orig_to_sub = np.full(mesh.faces.shape[0], -1, dtype=np.int32)
+        orig_to_sub = np.full(num_faces, -1, dtype=np.int32)
         orig_to_sub[sub_to_orig] = np.arange(sub_to_orig.size, dtype=np.int32)
-
-        idxs = tree.query_ball_point(ep_points[i], r=radius)
-        if not idxs:
-            processed[i] = True
+        
+        # Find all targets for this source within the pair list
+        pair_mask = cross_comp_pairs[:, 0] == src_idx
+        targets = cross_comp_pairs[pair_mask, 1]
+        
+        if targets.size == 0:
+            processed[src_idx] = True
             continue
-
-        src_idxs = []
-        src_lookup = {}
-        for j in idxs:
-            if processed[j]:
-                continue
-            sf = int(endpoint_faces[j])
-            sj = orig_to_sub[sf]
-            if sj == -1:
-                continue
-            src_lookup[len(src_idxs)] = j
-            src_idxs.append(sj)
-
-        if not src_idxs:
-            processed[i] = True
+        
+        # Filter targets that are in the subgraph
+        target_faces = endpoint_faces[targets]
+        target_subs = orig_to_sub[target_faces]
+        valid_mask = target_subs >= 0
+        
+        if not np.any(valid_mask):
+            processed[src_idx] = True
             continue
-
-        dist, pred = csgraph.dijkstra(subgraph, directed=False, indices=np.array(src_idxs, dtype=int), return_predecessors=True)
-
-        for row, j in src_lookup.items():
-            s_comp = int(endpoint_comp_ids[j])
-
-            cand_idx = tree.query_ball_point(ep_points[j], r=radius)
-            if not cand_idx:
-                processed[j] = True
+            
+        valid_targets = targets[valid_mask]
+        valid_target_subs = target_subs[valid_mask]
+        
+        # Single Dijkstra call from source to all valid targets
+        src_sub = orig_to_sub[start_face]
+        if src_sub == -1:
+            processed[src_idx] = True
+            continue
+            
+        dist, pred = csgraph.dijkstra(subgraph, directed=False, indices=src_sub, return_predecessors=True)
+        
+        # Find best connection for each valid target
+        for tgt_idx, tgt_sub in zip(valid_targets, valid_target_subs):
+            if processed[tgt_idx]:
                 continue
-            best_face = None
-            best_dist = float('inf')
-            for k in cand_idx:
-                if k == j:
-                    continue
-                if int(endpoint_comp_ids[k]) == s_comp:
-                    continue
-                cf = int(endpoint_faces[k])
-                csub = orig_to_sub[cf]
-                if csub == -1:
-                    continue
-                d = dist[row, csub]
-                if np.isfinite(d) and d < best_dist:
-                    best_dist = d
-                    best_face = csub
-
-            if best_face is None:
-                processed[j] = True
+                
+            d = dist[tgt_sub]
+            if not np.isfinite(d):
                 continue
-
+            
+            # Reconstruct path
             path_sub = []
-            cur = int(best_face)
-            src_sub = int(src_idxs[row])
+            cur = int(tgt_sub)
             while cur != -9999 and cur != src_sub:
                 path_sub.append(cur)
-                cur = int(pred[row, cur])
+                cur = int(pred[cur])
             if cur != src_sub:
-                processed[j] = True
                 continue
             path_sub.append(src_sub)
             path_sub.reverse()
 
-            path = [int(sub_to_orig[idx]) for idx in path_sub]
+            # Mark edges in path using dictionary lookup
+            path = sub_to_orig[path_sub]
             for a, b in zip(path[:-1], path[1:]):
                 key = (a, b) if a < b else (b, a)
-                k = pair_to_idx.get(key, None)
-                if k is not None:
-                    new_edges_mask[k] = True
+                edge_idx = pair_to_idx.get(key)
+                if edge_idx is not None:
+                    new_edges_mask[edge_idx] = True
             bridges_found += 1
-            processed[j] = True
+            processed[tgt_idx] = True
+        
+        processed[src_idx] = True
 
     print(f"  Built {bridges_found} bridges from {len(endpoint_faces)} endpoints (subgraph radius: {subgraph_radius:.4f})")
     return new_edges_mask
@@ -429,7 +430,7 @@ def connect_components(mesh, runs=5, curvature_penalty_strength=100.0, search_ra
         mesh, curvature_penalty_strength=curvature_penalty_strength
     )
 
-    # Radius in world units
+    # Radius in world units (computed once)
     edge_lengths = getattr(mesh, "edges_unique_length", None)
     if edge_lengths is None or edge_lengths.size == 0:
         tri = mesh.triangles
@@ -442,14 +443,15 @@ def connect_components(mesh, runs=5, curvature_penalty_strength=100.0, search_ra
     radius = 3.0 * median_edge
     
     # Print initial component count
-    components, endpoints_per_comp, face_to_comp = find_connected_components(mesh, valley_mask)
+    _, endpoints_per_comp, _ = find_connected_components(mesh, valley_mask)
     total_endpoints = sum(len(ep) for ep in endpoints_per_comp)
-    print(f"Iteration 0 (initial): {len(components)} components, {total_endpoints} endpoint faces")
+    num_components = len(endpoints_per_comp)
+    print(f"Iteration 0 (initial): {num_components} components, {total_endpoints} endpoint faces")
     print(f"Median edge length: {median_edge:.6f}, Euclidean radius: {radius:.6f}, Graph search radius: {radius * search_radius_factor:.6f}")
 
     for iteration in range(int(runs)):
         # Recompute components/endpoints
-        components, endpoints_per_comp, face_to_comp = find_connected_components(mesh, valley_mask)
+        _, endpoints_per_comp, face_to_comp = find_connected_components(mesh, valley_mask)
         
         # Stitch with distance-limited Dijkstra
         new_edges_mask = dijkstra_bridge_edges(
@@ -466,7 +468,7 @@ def connect_components(mesh, runs=5, curvature_penalty_strength=100.0, search_ra
         
         # Early exit if nothing new was added
         if not np.any(new_edges_mask):
-            print(f"Iteration {iteration + 1}: {len(components)} components, 0 new edges - stopping early")
+            print(f"Iteration {iteration + 1}: {len(endpoints_per_comp)} components, 0 new edges - stopping early")
             break
 
         # Union into valley mask
@@ -474,8 +476,8 @@ def connect_components(mesh, runs=5, curvature_penalty_strength=100.0, search_ra
         print(f"Iteration {iteration + 1}: added {num_new_edges} bridge edges, total valley edges: {np.sum(valley_mask)}")
 
     # Print final component count
-    components, endpoints_per_comp, face_to_comp = find_connected_components(mesh, valley_mask)
-    print(f"Final: {len(components)} components")
+    _, endpoints_per_comp, _ = find_connected_components(mesh, valley_mask)
+    print(f"Final: {len(endpoints_per_comp)} components")
 
     return valley_mask
            

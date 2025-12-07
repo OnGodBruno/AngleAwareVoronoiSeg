@@ -12,12 +12,18 @@ let maxRenderErrors = 10;
 let currentSeedColor = 'red'; // Default seed color
 let segmentationMode = 'manual'; // 'manual' or 'automatic'
 let autoSeedMarkersGroup = null;
-let valleyFaces = null;
+let valleyEdges = null;
 let valleyScores = null;
+let valleyLinesObject = null; // To store the valley edges visualization
+let valleyEndpointsGroup = null; // To store valley line endpoint markers
 // to show seeds in automatic mode
 const SEED_MARKER_SCALE = 0.03;   // relative to model diagonal (default 0.01)
 const SEED_MARKER_MIN = 0.05;
 const MANUAL_SEED_RADIUS = 0.04;
+
+// Path finding variables
+let pathPoints = [];
+let pathMarkersGroup = null;
 
 
 // Color mapping for seeds
@@ -190,6 +196,34 @@ function restartAnimation() {
 }
 
 function clearScene() {
+    // Remove valley edges first
+    if (valleyLinesObject) {
+        if (meshObject && meshObject.children.includes(valleyLinesObject)) {
+            meshObject.remove(valleyLinesObject);
+        } else {
+            scene.remove(valleyLinesObject);
+        }
+        
+        // Dispose of all cylinders in the group
+        valleyLinesObject.traverse((child) => {
+            if (child.isMesh) {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+            }
+        });
+        valleyLinesObject = null;
+    }
+    
+    // Remove valley endpoints
+    if (valleyEndpointsGroup) {
+        scene.remove(valleyEndpointsGroup);
+        valleyEndpointsGroup.traverse((child) => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+        });
+        valleyEndpointsGroup = null;
+    }
+    
     if (meshObject) {
         scene.remove(meshObject);
         if (meshObject.geometry) {
@@ -290,11 +324,6 @@ function onWindowResize() {
 }
 
 function onMouseClick(event) {
-    // Only handle clicks in manual mode
-    if (segmentationMode !== 'manual') {
-        return;
-    }
-    
     if (!meshObject || controls.isUserInteracting) {
         return;
     }
@@ -310,10 +339,18 @@ function onMouseClick(event) {
     
     if (intersects.length > 0) {
         const point = intersects[0].point;
-        updateDebugInfo(`Seed click detected at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
-        addSeed(point.x, point.y, point.z);
+        
+        // Check if shift key is pressed for path point selection
+        if (event.shiftKey) {
+            updateDebugInfo(`Path point detected at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
+            addPathPoint(point);
+        } else if (segmentationMode === 'manual') {
+            // Normal seed selection in manual mode
+            updateDebugInfo(`Seed click detected at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
+            addSeed(point.x, point.y, point.z);
+        }
     } else {
-        updateDebugInfo('No intersection found during seed click');
+        updateDebugInfo('No intersection found during click');
     }
 }
 
@@ -672,11 +709,24 @@ function displayMesh(data) {
         
         updateDebugInfo('Camera positioned - mesh should be visible');
 
-        // Display valley faces if available
-        if (data.valley_faces && data.valley_scores) {
-            valleyFaces = data.valley_faces;
+        // Display valley edges if available
+        if (data.valley_edges && data.valley_scores) {
+            valleyEdges = data.valley_edges;
             valleyScores = data.valley_scores;
-            displayValleyFaces();
+            displayValleyEdges();
+        }
+        
+        // Display attempted extensions if available
+        if (data.attempted_extensions) {
+            console.log('Attempted extensions received:', data.attempted_extensions.length);
+            displayAttemptedExtensions(data.attempted_extensions);
+        } else {
+            console.log('No attempted extensions in response');
+        }
+        
+        // Display valley line endpoints if available
+        if (data.valley_endpoints) {
+            displayValleyEndpoints(data.valley_endpoints);
         }
         
         // Force a safe render
@@ -695,66 +745,188 @@ function displayMesh(data) {
 }
 
 
-function displayValleyFaces() {
-    if (!meshObject || !valleyFaces || !valleyScores) {
-        updateDebugInfo('No valley data available');
+function displayValleyEdges() {
+    if (!meshObject || !valleyEdges || !valleyScores) {
+        updateDebugInfo('No valley edge data available');
         return;
     }
     
-    updateDebugInfo(`Displaying valley faces: ${valleyFaces.filter(v => v).length} valley faces found`);
-    
-    // Create vertex colors based on valley faces
-    const geometry = meshObject.geometry;
-    const positionAttribute = geometry.attributes.position;
-    const vertexCount = positionAttribute.count;
-    
-    // Initialize colors array
-    const colors = new Float32Array(vertexCount * 3);
-    
-    // Default color (gray)
-    for (let i = 0; i < vertexCount * 3; i += 3) {
-        colors[i] = 0.7;     // R
-        colors[i + 1] = 0.7; // G
-        colors[i + 2] = 0.7; // B
+    // Remove previous valley edges if they exist
+    if (valleyLinesObject) {
+        scene.remove(valleyLinesObject);
+        if (valleyLinesObject.geometry) valleyLinesObject.geometry.dispose();
+        if (valleyLinesObject.material) valleyLinesObject.material.dispose();
+        valleyLinesObject = null;
     }
     
-    // Color valley faces based on their scores
-    for (let faceIdx = 0; faceIdx < meshData.faces.length; faceIdx++) {
-        if (valleyFaces[faceIdx]) {
-            const face = meshData.faces[faceIdx];
-            const score = valleyScores[faceIdx];
-            
-            // Color intensity based on score (red gradient)
-            const intensity = Math.min(score, 1.0);
-            const color = [
-                0.3 + intensity * 0.7,  // R (0.3 to 1.0)
-                0.1 * (1 - intensity),  // G (0.1 to 0)
-                0.1 * (1 - intensity)   // B (0.1 to 0)
-            ];
-            
-            // Apply color to all three vertices of the face
-            for (let j = 0; j < 3; j++) {
-                const vertexIdx = face[j];
-                if (vertexIdx < vertexCount) {
-                    colors[vertexIdx * 3] = color[0];
-                    colors[vertexIdx * 3 + 1] = color[1];
-                    colors[vertexIdx * 3 + 2] = color[2];
-                }
-            }
-        }
+    updateDebugInfo(`Displaying valley edges: ${valleyEdges.length} edges found`);
+    
+    // Use MeshLine or cylinder approach for thick lines that work on all platforms
+    // For now, we'll use thin cylinders to represent edges
+    const edgeGroup = new THREE.Group();
+    
+    // Calculate appropriate cylinder radius based on mesh size
+    const bbox = new THREE.Box3().setFromObject(meshObject);
+    const meshSize = bbox.getSize(new THREE.Vector3()).length();
+    const cylinderRadius = meshSize * 0.0005; // Adjust this multiplier for thickness
+    
+    for (let i = 0; i < valleyEdges.length; i++) {
+        const edge = valleyEdges[i]; // [[x1, y1, z1], [x2, y2, z2]]
+        const score = valleyScores[i];
+        
+        const start = new THREE.Vector3(edge[0][0], edge[0][1], edge[0][2]);
+        const end = new THREE.Vector3(edge[1][0], edge[1][1], edge[1][2]);
+        
+        // Calculate edge direction and length
+        const direction = new THREE.Vector3().subVectors(end, start);
+        const length = direction.length();
+        
+        // Create cylinder geometry for the edge
+        const geometry = new THREE.CylinderGeometry(cylinderRadius, cylinderRadius, length, 8);
+        
+        // Color based on score (bright red gradient with emissive for visibility)
+        const intensity = Math.min(score, 1.0);
+        const r = 0.5 + intensity * 0.5;  // R (0.5 to 1.0) - brighter base
+        const g = 0.0;  // G always 0 for pure red
+        const b = 0.0;  // B always 0 for pure red
+        
+        const material = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(r, g, b),
+            transparent: false,
+            depthTest: true,
+            depthWrite: true
+        });
+        
+        const cylinder = new THREE.Mesh(geometry, material);
+        
+        // Position cylinder at midpoint
+        const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+        cylinder.position.copy(midpoint);
+        
+        // Rotate cylinder to align with edge direction
+        cylinder.quaternion.setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0),
+            direction.normalize()
+        );
+        
+        edgeGroup.add(cylinder);
     }
     
-    // Set color attribute
-    const colorAttribute = new THREE.BufferAttribute(colors, 3);
-    geometry.setAttribute('color', colorAttribute);
+    valleyLinesObject = edgeGroup;
     
-    // Update material to use vertex colors
-    meshObject.material = new THREE.MeshLambertMaterial({
-        vertexColors: true,
-        side: THREE.DoubleSide
+    // Add as child of meshObject so lines follow mesh transformations
+    meshObject.add(valleyLinesObject);
+    
+    updateDebugInfo(`Valley edges displayed: ${valleyEdges.length} edges as thick cylinders (radius: ${cylinderRadius.toFixed(5)})`);
+}
+
+
+function displayValleyEndpoints(endpoints) {
+    // Remove previous endpoint markers if they exist
+    if (valleyEndpointsGroup) {
+        scene.remove(valleyEndpointsGroup);
+        valleyEndpointsGroup.traverse((child) => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+        });
+        valleyEndpointsGroup = null;
+    }
+    
+    if (!endpoints || endpoints.length === 0) {
+        updateDebugInfo('No valley endpoints to display');
+        return;
+    }
+    
+    updateDebugInfo(`Displaying ${endpoints.length} valley line endpoints`);
+    
+    valleyEndpointsGroup = new THREE.Group();
+    
+    // Calculate sphere size based on mesh - make it about twice the cylinder radius
+    const bbox = new THREE.Box3().setFromObject(meshObject);
+    const meshSize = bbox.getSize(new THREE.Vector3()).length();
+    const cylinderRadius = meshSize * 0.0005; // Same calculation as valley edges
+    const sphereRadius = cylinderRadius * 2; // About twice as thick as the cylinders
+    
+    // Create geometry (share single geometry for all spheres)
+    const sphereGeometry = new THREE.SphereGeometry(sphereRadius, 16, 16);
+    
+    // Create material - bright yellow to stand out
+    const endpointMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xffff00,  // Yellow
+        emissive: 0xffff00,
+        emissiveIntensity: 0.5
     });
     
-    updateDebugInfo('Valley faces colored successfully');
+    for (const endpoint of endpoints) {
+        const sphere = new THREE.Mesh(sphereGeometry, endpointMaterial);
+        
+        // Apply the same transformation as the mesh
+        const pos = endpoint.position;
+        sphere.position.set(pos[0], pos[1], pos[2]);
+        
+        valleyEndpointsGroup.add(sphere);
+    }
+    
+    // Apply the same transformations as the mesh
+    if (meshObject) {
+        valleyEndpointsGroup.position.copy(meshObject.position);
+        valleyEndpointsGroup.scale.copy(meshObject.scale);
+    }
+    
+    scene.add(valleyEndpointsGroup);
+    
+    updateDebugInfo(`Valley endpoints displayed: ${endpoints.length} yellow spheres`);
+}
+
+
+function displayAttemptedExtensions(attemptedEdges) {
+    if (!meshObject || !attemptedEdges || attemptedEdges.length === 0) {
+        updateDebugInfo('No attempted extension edges to display');
+        return;
+    }
+    
+    updateDebugInfo(`Displaying ${attemptedEdges.length} attempted extension edges (dark red)`);
+    
+    const extensionGroup = new THREE.Group();
+    
+    // Calculate cylinder radius (same as valley edges)
+    const bbox = new THREE.Box3().setFromObject(meshObject);
+    const meshSize = bbox.getSize(new THREE.Vector3()).length();
+    const cylinderRadius = meshSize * 0.0005;
+    
+    // Dark red material for attempted extensions
+    const extensionMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0x880000  // Dark red (darker than valleys which are 0xff0000)
+    });
+    
+    for (let i = 0; i < attemptedEdges.length; i++) {
+        const edge = attemptedEdges[i];
+        const p1 = new THREE.Vector3(edge[0][0], edge[0][1], edge[0][2]);
+        const p2 = new THREE.Vector3(edge[1][0], edge[1][1], edge[1][2]);
+        
+        const edgeLength = p1.distanceTo(p2);
+        if (edgeLength < 1e-10) continue;
+        
+        const cylinderGeometry = new THREE.CylinderGeometry(cylinderRadius, cylinderRadius, edgeLength, 8);
+        const cylinder = new THREE.Mesh(cylinderGeometry, extensionMaterial);
+        
+        const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+        cylinder.position.copy(midpoint);
+        
+        const direction = new THREE.Vector3().subVectors(p2, p1).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(direction.dot(up)) > 0.99) {
+            up.set(1, 0, 0);
+        }
+        cylinder.quaternion.setFromUnitVectors(up, direction);
+        
+        extensionGroup.add(cylinder);
+    }
+    
+    // IMPORTANT: Add to meshObject (not scene) so it inherits transformations
+    meshObject.add(extensionGroup);
+    
+    updateDebugInfo(`Attempted extensions displayed: ${attemptedEdges.length} dark red cylinders (added to mesh)`);
 }
 
 
@@ -910,16 +1082,17 @@ function clearSeeds() {
     // Remove visual markers
     removeSeedMarkers();
     
-    // Reset mesh colors if segmented (but keep valley colors if they exist)
+    // Reset mesh colors if segmented (but keep valley edges if they exist)
     if (meshObject && meshObject.material.vertexColors) {
-        if (valleyFaces && valleyScores) {
-            displayValleyFaces(); // Re-display valley faces
-        } else {
-            meshObject.material = new THREE.MeshLambertMaterial({
-                color: 0x888888,
-                wireframe: false,
-                side: THREE.DoubleSide
-            });
+        meshObject.material = new THREE.MeshLambertMaterial({
+            color: 0x888888,
+            wireframe: false,
+            side: THREE.DoubleSide
+        });
+        
+        // Re-display valley edges if available
+        if (valleyEdges && valleyScores) {
+            displayValleyEdges();
         }
     }
     
@@ -1317,6 +1490,273 @@ function displaySegmentedMesh(faceColors) {
 function downloadSegments() {
     const outputDir = document.getElementById('outputDir').value;
     window.open(`/download_segments?output_dir=${encodeURIComponent(outputDir)}`, '_blank');
+}
+
+// Path finding functions
+function clearPathPoints() {
+    pathPoints = [];
+    updatePathPointCounter();
+    
+    // Remove visual markers
+    if (pathMarkersGroup) {
+        scene.remove(pathMarkersGroup);
+        pathMarkersGroup = null;
+    }
+    
+    updateDebugInfo('Path points cleared');
+}
+
+function updatePathPointCounter() {
+    const counter = document.getElementById('pathPointCount');
+    if (counter) {
+        counter.textContent = pathPoints.length;
+    }
+    
+    // Enable/disable the find path button
+    const findPathBtn = document.getElementById('findPathBtn');
+    if (findPathBtn) {
+        findPathBtn.disabled = pathPoints.length !== 2 || !meshData;
+    }
+}
+
+function addPathPoint(point) {
+    // Only allow 2 points
+    if (pathPoints.length >= 2) {
+        pathPoints = [];
+        if (pathMarkersGroup) {
+            scene.remove(pathMarkersGroup);
+            pathMarkersGroup = null;
+        }
+    }
+    
+    pathPoints.push(point);
+    updatePathPointCounter();
+    
+    // Add visual marker
+    if (!pathMarkersGroup) {
+        pathMarkersGroup = new THREE.Group();
+        scene.add(pathMarkersGroup);
+    }
+    
+    const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+    const material = new THREE.MeshBasicMaterial({ 
+        color: pathPoints.length === 1 ? 0x00ff00 : 0xff0000 
+    });
+    const marker = new THREE.Mesh(geometry, material);
+    marker.position.copy(point);
+    pathMarkersGroup.add(marker);
+    
+    updateDebugInfo(`Path point ${pathPoints.length} added at (${point.x.toFixed(2)}, ${point.y.toFixed(2)}, ${point.z.toFixed(2)})`);
+}
+
+async function findDijkstraPath() {
+    if (pathPoints.length !== 2) {
+        updateDebugInfo('Error: Please select exactly 2 points');
+        return;
+    }
+    
+    updateDebugInfo('Finding Dijkstra path...');
+    
+    try {
+        const response = await fetch('/find_path', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                points: pathPoints.map(p => [p.x, p.y, p.z])
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            updateDebugInfo(`Path found: ${result.path_length} faces, distance: ${result.total_distance.toFixed(2)}`);
+            console.log('Path faces:', result.path);
+            console.log('Start face:', result.start_face, 'End face:', result.end_face);
+            
+            // Update mesh colors to show the path
+            if (meshObject && meshObject.geometry && result.face_colors) {
+                const geometry = meshObject.geometry;
+                const faceCount = result.face_colors.length;
+                
+                // For non-indexed geometry, we need 3 vertices per face
+                const positions = geometry.attributes.position;
+                const vertexCount = positions.count;
+                const expectedVertexCount = faceCount * 3;
+                
+                console.log(`Geometry vertices: ${vertexCount}, Expected: ${expectedVertexCount}, Faces: ${faceCount}`);
+                
+                // Create color array for vertices (3 vertices per face)
+                const colors = new Float32Array(vertexCount * 3);
+                
+                if (vertexCount === expectedVertexCount) {
+                    // Non-indexed geometry - each face has 3 vertices
+                    for (let faceIdx = 0; faceIdx < faceCount; faceIdx++) {
+                        const faceColor = result.face_colors[faceIdx];
+                        // Each face has 3 vertices
+                        for (let v = 0; v < 3; v++) {
+                            const vertexIdx = faceIdx * 3 + v;
+                            colors[vertexIdx * 3] = faceColor[0];
+                            colors[vertexIdx * 3 + 1] = faceColor[1];
+                            colors[vertexIdx * 3 + 2] = faceColor[2];
+                        }
+                    }
+                } else {
+                    // Indexed geometry - need to handle differently
+                    console.warn('Geometry appears to be indexed, attempting alternative coloring method');
+                    // Color all vertices with gray first
+                    for (let i = 0; i < vertexCount; i++) {
+                        colors[i * 3] = 0.7;
+                        colors[i * 3 + 1] = 0.7;
+                        colors[i * 3 + 2] = 0.7;
+                    }
+                    // Then color path faces
+                    if (geometry.index) {
+                        const indices = geometry.index.array;
+                        for (let i = 0; i < result.path.length; i++) {
+                            const faceIdx = result.path[i];
+                            const t = i / (result.path.length - 1);
+                            const color = [t, 1.0 - t, 0.0];
+                            
+                            // Color the 3 vertices of this face
+                            for (let v = 0; v < 3; v++) {
+                                const vertexIdx = indices[faceIdx * 3 + v];
+                                colors[vertexIdx * 3] = color[0];
+                                colors[vertexIdx * 3 + 1] = color[1];
+                                colors[vertexIdx * 3 + 2] = color[2];
+                            }
+                        }
+                    }
+                }
+                
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                meshObject.material.vertexColors = true;
+                meshObject.material.needsUpdate = true;
+                
+                console.log('Path visualization updated');
+            }
+        } else {
+            updateDebugInfo(`Error: ${result.error}`);
+        }
+    } catch (error) {
+        console.error('Error finding path:', error);
+        updateDebugInfo('Error finding path: ' + error.message);
+    }
+}
+
+async function facilityPlaceSeeds() {
+    console.log('facilityPlaceSeeds function called!');
+
+    if (!meshObject || !meshData) {
+        showStatus('Please load a mesh first', 'error');
+        return;
+    }
+
+    const numSeeds = parseInt(document.getElementById('facilitySeeds').value);
+    const strategy = document.getElementById('facilityStrategy').value;
+
+    if (numSeeds < 1 || numSeeds > 20) {
+        showStatus('Number of seeds must be between 1 and 20', 'error');
+        return;
+    }
+
+    showLoading(true);
+    showStatus(`Running facility placement algorithm with ${numSeeds} seeds using ${strategy} strategy...`, 'info');
+    updateDebugInfo(`Facility placement: ${numSeeds} seeds, strategy: ${strategy}`);
+
+    try {
+        const response = await fetch('/facility_place_seeds', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                num_seeds: numSeeds,
+                strategy: strategy
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Clear existing seeds first
+            clearSeeds();
+
+            // Add the facility-placed seeds with their assigned colors
+            for (let i = 0; i < result.seeds.length; i++) {
+                const seedData = result.seeds[i];
+                const position = seedData.position;
+                const color = seedData.color;
+
+                // Add seed with position and color
+                const seed = {
+                    position: position,
+                    color: color,
+                    colorRGB: seedColors[color] || [0.5, 0.5, 0.5]
+                };
+
+                selectedSeeds.push(seed);
+
+                // Add visual marker
+                const geometry = new THREE.SphereGeometry(0.05, 20, 20);
+                const colorRGB = seed.colorRGB;
+
+                // Create a more prominent material for facility-placed seeds
+                const material = new THREE.MeshLambertMaterial({
+                    color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
+                    opacity: 0.95,
+                    transparent: true,
+                    emissive: new THREE.Color(colorRGB[0] * 0.3, colorRGB[1] * 0.3, colorRGB[2] * 0.3),
+                    emissiveIntensity: 0.4
+                });
+
+                const marker = new THREE.Mesh(geometry, material);
+                marker.position.set(position[0], position[1], position[2]);
+
+                // Add a subtle ring around facility-placed seeds to distinguish them
+                const ringGeometry = new THREE.RingGeometry(0.06, 0.08, 16);
+                const ringMaterial = new THREE.MeshBasicMaterial({
+                    color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
+                    opacity: 0.6,
+                    transparent: true,
+                    side: THREE.DoubleSide
+                });
+                const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                ring.position.set(position[0], position[1], position[2]);
+                ring.lookAt(camera.position); // Face the camera
+
+                marker.userData = {
+                    isSeedMarker: true,
+                    seedIndex: selectedSeeds.length - 1,
+                    seedColor: color,
+                    isFacilityPlaced: true,
+                    ringMarker: ring
+                };
+                ring.userData = {
+                    isRingMarker: true,
+                    parentSeed: marker
+                };
+
+                scene.add(marker);
+                scene.add(ring);
+            }
+
+            updateSeedDisplay();
+            updateSegmentButtonState();
+
+            showStatus(`✨ Facility placement complete! ${result.num_seeds_placed} seeds optimally placed using ${result.strategy_used} algorithm. ${result.algorithm_info}`, 'success');
+            updateDebugInfo(`Facility placement successful: ${result.num_seeds_placed} seeds using ${result.strategy_used}`);
+        } else {
+            showStatus(`Error in facility placement: ${result.error}`, 'error');
+            updateDebugInfo('Facility placement failed: ' + result.error);
+        }
+    } catch (error) {
+        showStatus(`Network error: ${error.message}`, 'error');
+        updateDebugInfo('Facility placement network error: ' + error.message);
+    } finally {
+        showLoading(false);
+    }
 }
 
 // Initialize the application
