@@ -19,6 +19,199 @@ def load_and_clean_mesh(mesh_path):
     return mesh
 
 
+def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal_smoothing: bool = True) -> np.ndarray:
+    """
+    Finds concave edges by calculating the hinge vector and comparing it to the cross product of the normals. Calculates a valley score for each edge.
+    valley_score = ((-theta - angle_threshold_degree) / (180 - angle_threshold_degree))^p for theta < -angle_threshold_degree else 0.0
+    That means the score is between 0.0 and 1.0, where 1.0 is a perfectly concave edge (theta = -180 degree) and 0.0 is a flat edge (theta = 0 degree), convex edge or a concave edge under the angle threshold.
+    Args:
+        angle_threshold_deg (float, optional): The angle threshold at which an angle is accepted as a concave edge. Defaults to 20.0.
+        p (float, optional): p > 1 emphasizes sharp valleys (slow rise near threshold, fast toward 1), .p < 1 makes it "softer". Defaults to 2.0.
+        normal_smoothing (bool, optional): Whether to use smoothed normals for angle calculation. Defaults to True.
+    Returns:
+        numpy.ndarray of float: contains the valley score for each edge in the face adjacency (shape (num_edges, 1))
+    """
+    adj = mesh.face_adjacency
+    n1 = mesh.face_normals[adj[:, 0]]
+    n2 = mesh.face_normals[adj[:, 1]]
+    edges = mesh.face_adjacency_edges  # (vert_a, vert_b)
+    vertices = mesh.vertices
+    faces = mesh.faces
+    
+    if len(adj) == 0:
+        return np.zeros((0, 1), dtype=float)
+    
+    faces_L = faces[adj[:, 0]]
+    a = edges[:, 0]                  
+    b = edges[:, 1]
+    
+    # mask for every valid edge
+    mask_a = faces_L == a[:, None]
+    mask_b = faces_L == b[:, None]
+    has_a = mask_a.any(axis=1)
+    has_b = mask_b.any(axis=1)
+    valid_in_face = has_a & has_b
+
+    # index idx of the vertex a and b in the face
+    idx_a = mask_a.argmax(axis=1)
+    idx_b = mask_b.argmax(axis=1)
+
+    # index idx of the next vertex in the face
+    nxt_a_idx = (idx_a + 1) % 3
+    nxt_b_idx = (idx_b + 1) % 3
+    rows = np.arange(len(adj))
+    
+    # value of the next vertex in the face
+    nxt_a_val = faces_L[rows, nxt_a_idx]
+    nxt_b_val = faces_L[rows, nxt_b_idx]
+
+    # start and end vertex of the hinge (depending on the face orientation)
+    cond1 = valid_in_face & (nxt_a_val == b)
+    cond2 = valid_in_face & (nxt_b_val == a)
+    start = np.where(cond1, a, np.where(cond2, b, a))
+    end = np.where(cond1, b, np.where(cond2, a, b))
+
+    hinges = vertices[end] - vertices[start]
+    norms = np.linalg.norm(hinges, axis=1)
+    mask_ok = valid_in_face & (norms > 0)  # only norm vectors with length > 0
+    hinges[mask_ok] = hinges[mask_ok] / norms[mask_ok, None]
+    hv  = hinges[mask_ok] # contains all valid hinge vectors
+    
+    # raw face normals
+    n1r = n1[mask_ok]
+    n2r = n2[mask_ok]
+
+    if normal_smoothing:
+        # smoothed face normals
+        N_smooth = smooth_normals(mesh, k=2, sigma_deg=25.0)
+        n1s = N_smooth[adj[:, 0]][mask_ok]
+        n2s = N_smooth[adj[:, 1]][mask_ok]
+    
+        # absolute value of the sinus and the cosine are calculated with the smoothed normals, the sign with the raw normals
+        sin_mag = np.linalg.norm(np.cross(n1s, n2s), axis=1)
+        sign = np.sign(np.einsum('ij,ij->i', np.cross(n1r, n2r), hv))
+        
+        # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
+        sin = sign * sin_mag
+        cos = np.einsum('ij,ij->i', n1s, n2s).clip(-1, 1)
+    else:
+        # tan(angle) = sin(angle) / cos(angle) => angle = atan2(sin(angle), cos(angle))
+        cos = np.einsum('ij,ij->i', n1r, n2r).clip(-1, 1)
+        sin = np.einsum('ij,ij->i', np.cross(n1r, n2r), hv)
+    
+    theta_deg = np.degrees(np.arctan2(sin, cos)) # range [-180°, 180°]
+
+    denom = max(1e-9, (180.0 - angle_threshold_deg)) # avoid division by zero
+    sharp = np.clip(((-theta_deg) - angle_threshold_deg) / denom, 0.0, 1.0)
+    valley_valid = np.where(theta_deg < -angle_threshold_deg, np.power(sharp, p), 0.0)
+
+    valley_scores = np.zeros(len(adj), dtype=float)
+    valley_scores[mask_ok] = valley_valid
+    
+    return valley_scores.reshape(-1, 1).ravel()
+
+def smooth_normals(mesh, k:int=3, sigma_deg: float | None = 25.0):
+    """
+    Smooth face normals of a triangular mesh using iterative neighbor averaging.
+
+    Each face normal is updated by combining its own direction with those of
+    adjacent faces, weighted by similarity and optionally by a bilateral
+    (angle-based) Gaussian kernel. Neighbor contributions are sign-corrected
+    so that flipped normals do not cancel out.
+
+    Args:
+        mesh: A mesh object with attributes `faces`, `face_normals`,
+              and `face_adjacency` (e.g., a trimesh.Trimesh).
+        k (int): Number of smoothing iterations to apply (default: 3).
+        sigma_deg (float | None): Std. dev. σ of bilateral Gaussian in degrees. 
+            For angle θ between normals: w = exp(-(θ²)/(2σ²)).
+            Small σ → preserves sharp edges (weights ~0 if θ large). 
+            Large σ → smooths across edges (weights ~1). 
+             Valid range: 0 < σ ≤ 180, or None to disable.
+    Returns:
+        (ndarray): Array of shape (n_faces, 3) with smoothed, unit-length
+        face normals.
+    """
+    
+    N0 = mesh.face_normals
+    N = N0.astype(np.float32, copy=True)
+    
+    adj = mesh.face_adjacency
+    if adj.size == 0:
+        return N
+
+    i = adj[:, 0].astype(np.int64)
+    j = adj[:, 1].astype(np.int64)
+
+    # positive weights
+    w_pos = np.ones(len(i), dtype=np.float32)
+
+    if sigma_deg is not None:
+        d = np.einsum('ij,ij->i', N[i], N[j]).clip(-1, 1)
+        ang = np.degrees(np.arccos(d))
+        w_pos *= np.exp(-(ang * ang) / (2.0 * (sigma_deg ** 2))).astype(w_pos.dtype, copy=False)
+
+    # sign-weights s_ij = sign(dot(n_i, n_j))  (+1 oder -1)
+    sgn = np.sign(np.einsum('ij,ij->i', N[i], N[j])).astype(w_pos.dtype, copy=False)
+    w_signed = w_pos * sgn
+
+    row = np.concatenate([i, j])
+    col = np.concatenate([j, i])
+    dat_signed = np.concatenate([w_signed, w_signed])      # mit Vorzeichen
+    dat_pos    = np.concatenate([w_pos,    w_pos])         # immer >= 0
+
+    # (N x N)adjancency matrix W. One just for the sign (+1 or -1), one just with positive weights
+    nF = len(mesh.faces)
+    W_signed = sparse.csr_matrix((dat_signed, (row, col)), shape=(nF, nF))
+    W_pos    = sparse.csr_matrix((dat_pos,    (row, col)), shape=(nF, nF))
+
+    deg = (W_pos.sum(axis=1).A.ravel() + 1.0).astype(W_pos.dtype, copy=False)
+
+    # k iterations: N <- (N + W_signed @ N) / deg, then normalize
+    for _ in range(max(0, k)):
+        tmp = W_signed @ N
+        N = (N + tmp) / deg[:, None]
+        # normalize to unit length
+        nr = np.linalg.norm(N, axis=1, keepdims=True)
+        np.divide(N, np.clip(nr, 1e-12, None), out=N)
+
+    return N
+
+
+def get_valley_faces(mesh, angle_threshold_deg=20.0):
+    """Find faces that have at least one valley edge."""
+    valley_scores = find_valleys(
+        mesh,
+        angle_threshold_deg,
+        p=2.0,
+        normal_smoothing=True
+    )
+
+    # Mask of valley edges
+    valley_edges_mask = valley_scores > 0.0
+
+    # Face adjacency pairs corresponding to valley edges
+    valley_face_pairs = mesh.face_adjacency[valley_edges_mask]
+
+    # Faces that participate in at least one valley edge
+    valley_face_mask = np.zeros(len(mesh.faces), dtype=bool)
+    for f1, f2 in valley_face_pairs:
+        valley_face_mask[f1] = True
+        valley_face_mask[f2] = True
+
+    # Get scores for visualization (max valley score for each face)
+    face_scores = np.zeros(len(mesh.faces), dtype=float)
+    for i, (f1, f2) in enumerate(mesh.face_adjacency):
+        s = valley_scores[i]
+        if s > 0.0:
+            if s > face_scores[f1]:
+                face_scores[f1] = s
+            if s > face_scores[f2]:
+                face_scores[f2] = s
+
+    return valley_face_mask, face_scores
+
+
 def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     """
     Builds a face adjacency graph with curvature-aware edge weights.
