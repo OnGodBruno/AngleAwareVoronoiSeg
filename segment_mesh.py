@@ -19,17 +19,78 @@ def load_and_clean_mesh(mesh_path):
     return mesh
 
 
-def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal_smoothing: bool = True) -> np.ndarray:
+def smooth_normals(mesh, k:int=3, sigma_deg: float | None = 25.0):
     """
-    Finds concave edges by calculating the hinge vector and comparing it to the cross product of the normals. Calculates a valley score for each edge.
-    valley_score = ((-theta - angle_threshold_degree) / (180 - angle_threshold_degree))^p for theta < -angle_threshold_degree else 0.0
-    That means the score is between 0.0 and 1.0, where 1.0 is a perfectly concave edge (theta = -180 degree) and 0.0 is a flat edge (theta = 0 degree), convex edge or a concave edge under the angle threshold.
+    Smooth face normals of a triangular mesh using iterative neighbor averaging.
+
+    Each face normal is updated by combining its own direction with those of
+    adjacent faces, weighted by similarity and optionally by a bilateral
+    (angle-based) Gaussian kernel. Neighbor contributions are sign-corrected
+    so that flipped normals do not cancel out.
+
     Args:
-        angle_threshold_deg (float, optional): The angle threshold at which an angle is accepted as a concave edge. Defaults to 20.0.
-        p (float, optional): p > 1 emphasizes sharp valleys (slow rise near threshold, fast toward 1), .p < 1 makes it "softer". Defaults to 2.0.
-        normal_smoothing (bool, optional): Whether to use smoothed normals for angle calculation. Defaults to True.
+        mesh: A mesh object with attributes `faces`, `face_normals`,
+              and `face_adjacency` (e.g., a trimesh.Trimesh).
+        k (int): Number of smoothing iterations to apply (default: 3).
+        sigma_deg (float | None): Std. dev. σ of bilateral Gaussian in degrees. 
+            For angle θ between normals: w = exp(-(θ²)/(2σ²)).
+            Small σ → preserves sharp edges (weights ~0 if θ large). 
+            Large σ → smooths across edges (weights ~1). 
+             Valid range: 0 < σ ≤ 180, or None to disable.
     Returns:
-        numpy.ndarray of float: contains the valley score for each edge in the face adjacency (shape (num_edges, 1))
+        (ndarray): Array of shape (n_faces, 3) with smoothed, unit-length
+        face normals.
+    """
+    
+    N0 = mesh.face_normals
+    N = N0.astype(np.float32, copy=True)
+    
+    adj = mesh.face_adjacency
+    if adj.size == 0:
+        return N
+
+    i = adj[:, 0].astype(np.int64)
+    j = adj[:, 1].astype(np.int64)
+
+    # positive weights
+    w_pos = np.ones(len(i), dtype=np.float32)
+
+    if sigma_deg is not None:
+        d = np.einsum('ij,ij->i', N[i], N[j]).clip(-1, 1)
+        ang = np.degrees(np.arccos(d))
+        w_pos *= np.exp(-(ang * ang) / (2.0 * (sigma_deg ** 2))).astype(w_pos.dtype, copy=False)
+
+    # sign-weights s_ij = sign(dot(n_i, n_j))  (+1 oder -1)
+    sgn = np.sign(np.einsum('ij,ij->i', N[i], N[j])).astype(w_pos.dtype, copy=False)
+    w_signed = w_pos * sgn
+
+    row = np.concatenate([i, j])
+    col = np.concatenate([j, i])
+    dat_signed = np.concatenate([w_signed, w_signed])      # mit Vorzeichen
+    dat_pos    = np.concatenate([w_pos,    w_pos])         # immer >= 0
+
+    # (N x N)adjancency matrix W. One just for the sign (+1 or -1), one just with positive weights
+    nF = len(mesh.faces)
+    W_signed = sparse.csr_matrix((dat_signed, (row, col)), shape=(nF, nF))
+    W_pos    = sparse.csr_matrix((dat_pos,    (row, col)), shape=(nF, nF))
+
+    deg = (W_pos.sum(axis=1).A.ravel() + 1.0).astype(W_pos.dtype, copy=False)
+
+    # k iterations: N <- (N + W_signed @ N) / deg, then normalize
+    for _ in range(max(0, k)):
+        tmp = W_signed @ N
+        N = (N + tmp) / deg[:, None]
+        # normalize to unit length
+        nr = np.linalg.norm(N, axis=1, keepdims=True)
+        np.divide(N, np.clip(nr, 1e-12, None), out=N)
+
+    return N
+
+
+def find_valleys(mesh, normal_smoothing: bool = True, valley_threshold: float = 0.0) -> np.ndarray:
+    """
+    Finds concave edges by calculating the hinge vector and comparing it to the cross product of the normals. 
+    Calculates a valley score for each edge.
     """
     adj = mesh.face_adjacency
     n1 = mesh.face_normals[adj[:, 0]]
@@ -99,83 +160,17 @@ def find_valleys(mesh, angle_threshold_deg: float = 20.0, p: float = 2.0, normal
         cos = np.einsum('ij,ij->i', n1r, n2r).clip(-1, 1)
         sin = np.einsum('ij,ij->i', np.cross(n1r, n2r), hv)
     
-    theta_deg = np.degrees(np.arctan2(sin, cos)) # range [-180°, 180°]
-
-    denom = max(1e-9, (180.0 - angle_threshold_deg)) # avoid division by zero
-    sharp = np.clip(((-theta_deg) - angle_threshold_deg) / denom, 0.0, 1.0)
-    valley_valid = np.where(theta_deg < -angle_threshold_deg, np.power(sharp, p), 0.0)
-
+    theta_deg = np.degrees(np.arctan2(sin, cos))
+    cap = 160.0
+    neg = np.where(theta_deg < 0, -theta_deg, 0.0)
+    valley_valid = np.clip(neg, 0.0, cap) / cap
     valley_scores = np.zeros(len(adj), dtype=float)
     valley_scores[mask_ok] = valley_valid
     
-    return valley_scores.reshape(-1, 1).ravel()
-
-def smooth_normals(mesh, k:int=3, sigma_deg: float | None = 25.0):
-    """
-    Smooth face normals of a triangular mesh using iterative neighbor averaging.
-
-    Each face normal is updated by combining its own direction with those of
-    adjacent faces, weighted by similarity and optionally by a bilateral
-    (angle-based) Gaussian kernel. Neighbor contributions are sign-corrected
-    so that flipped normals do not cancel out.
-
-    Args:
-        mesh: A mesh object with attributes `faces`, `face_normals`,
-              and `face_adjacency` (e.g., a trimesh.Trimesh).
-        k (int): Number of smoothing iterations to apply (default: 3).
-        sigma_deg (float | None): Std. dev. σ of bilateral Gaussian in degrees. 
-            For angle θ between normals: w = exp(-(θ²)/(2σ²)).
-            Small σ → preserves sharp edges (weights ~0 if θ large). 
-            Large σ → smooths across edges (weights ~1). 
-             Valid range: 0 < σ ≤ 180, or None to disable.
-    Returns:
-        (ndarray): Array of shape (n_faces, 3) with smoothed, unit-length
-        face normals.
-    """
+    valley_mask = valley_scores > valley_threshold
     
-    N0 = mesh.face_normals
-    N = N0.astype(np.float32, copy=True)
-    
-    adj = mesh.face_adjacency
-    if adj.size == 0:
-        return N
+    return valley_scores, valley_mask
 
-    i = adj[:, 0].astype(np.int64)
-    j = adj[:, 1].astype(np.int64)
-
-    # positive weights
-    w_pos = np.ones(len(i), dtype=np.float32)
-
-    if sigma_deg is not None:
-        d = np.einsum('ij,ij->i', N[i], N[j]).clip(-1, 1)
-        ang = np.degrees(np.arccos(d))
-        w_pos *= np.exp(-(ang * ang) / (2.0 * (sigma_deg ** 2))).astype(w_pos.dtype, copy=False)
-
-    # sign-weights s_ij = sign(dot(n_i, n_j))  (+1 oder -1)
-    sgn = np.sign(np.einsum('ij,ij->i', N[i], N[j])).astype(w_pos.dtype, copy=False)
-    w_signed = w_pos * sgn
-
-    row = np.concatenate([i, j])
-    col = np.concatenate([j, i])
-    dat_signed = np.concatenate([w_signed, w_signed])      # mit Vorzeichen
-    dat_pos    = np.concatenate([w_pos,    w_pos])         # immer >= 0
-
-    # (N x N)adjancency matrix W. One just for the sign (+1 or -1), one just with positive weights
-    nF = len(mesh.faces)
-    W_signed = sparse.csr_matrix((dat_signed, (row, col)), shape=(nF, nF))
-    W_pos    = sparse.csr_matrix((dat_pos,    (row, col)), shape=(nF, nF))
-
-    deg = (W_pos.sum(axis=1).A.ravel() + 1.0).astype(W_pos.dtype, copy=False)
-
-    # k iterations: N <- (N + W_signed @ N) / deg, then normalize
-    for _ in range(max(0, k)):
-        tmp = W_signed @ N
-        N = (N + tmp) / deg[:, None]
-        # normalize to unit length
-        nr = np.linalg.norm(N, axis=1, keepdims=True)
-        np.divide(N, np.clip(nr, 1e-12, None), out=N)
-
-    return N
 
 
 def get_valley_faces(mesh, angle_threshold_deg=20.0):
@@ -248,7 +243,9 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     # Penalties
     curvature_penalty = np.exp(curvature_penalty_strength * angle)
     spatial_penalty = 1 + (spatial_dist / avg_edge_length )**2
-
+    
+    
+    valley_scores, _ = find_valleys(mesh, normal_smoothing=True, valley_threshold=0.0)
     weights = spatial_penalty + curvature_penalty
 
     row = adj[:, 0]
