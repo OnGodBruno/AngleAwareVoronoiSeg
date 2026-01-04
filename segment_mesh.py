@@ -87,7 +87,7 @@ def smooth_normals(mesh, k:int=3, sigma_deg: float | None = 25.0):
     return N
 
 
-def find_valleys(mesh, normal_smoothing: bool = True, valley_threshold: float = 0.0) -> np.ndarray:
+def find_valleys(mesh, normal_smoothing: bool = False, valley_threshold: float = 0.1) -> np.ndarray:
     """
     Finds concave edges by calculating the hinge vector and comparing it to the cross product of the normals. 
     Calculates a valley score for each edge.
@@ -173,20 +173,15 @@ def find_valleys(mesh, normal_smoothing: bool = True, valley_threshold: float = 
 
 
 
-def get_valley_faces(mesh, angle_threshold_deg=20.0):
+def get_valley_faces(mesh):
     """Find faces that have at least one valley edge."""
-    valley_scores = find_valleys(
-        mesh,
-        angle_threshold_deg,
-        p=2.0,
-        normal_smoothing=True
-    )
-
-    # Mask of valley edges
-    valley_edges_mask = valley_scores > 0.0
+    valley_scores, valley_mask = find_valleys(mesh)
+    
+    # DEBUG
+    print(f"Valley edges: {np.sum(valley_mask)}/{len(mesh.face_adjacency)} ")
 
     # Face adjacency pairs corresponding to valley edges
-    valley_face_pairs = mesh.face_adjacency[valley_edges_mask]
+    valley_face_pairs = mesh.face_adjacency[valley_mask]
 
     # Faces that participate in at least one valley edge
     valley_face_mask = np.zeros(len(mesh.faces), dtype=bool)
@@ -245,8 +240,11 @@ def build_adjacency_graph(mesh, curvature_penalty_strength, user_seeds=None):
     spatial_penalty = 1 + (spatial_dist / avg_edge_length )**2
     
     
-    valley_scores, _ = find_valleys(mesh, normal_smoothing=True, valley_threshold=0.0)
+    valley_scores, valley_mask = find_valleys(mesh, normal_smoothing=True, valley_threshold=0.1)
+    
+    
     weights = spatial_penalty + curvature_penalty
+    weights[valley_mask] = np.inf
 
     row = adj[:, 0]
     col = adj[:, 1]

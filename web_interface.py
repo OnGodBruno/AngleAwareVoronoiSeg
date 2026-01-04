@@ -27,6 +27,8 @@ current_sparse_matrix = None
 current_face_centers = None
 current_mesh_path = None
 current_curvature_penalty = 100.0
+current_valley_faces = None
+current_valley_scores = None
 
 @app.route('/')
 def index():
@@ -157,10 +159,20 @@ def upload_mesh():
                 current_mesh, curvature_penalty_strength, user_seeds=None
             )
             
+            # Get valley faces for visualization
+            from segment_mesh import get_valley_faces
+            valley_face_mask, valley_scores = get_valley_faces(current_mesh)
+            current_valley_faces = valley_face_mask
+            current_valley_scores = valley_scores
+            
             # Prepare mesh data for Three.js
             vertices = current_mesh.vertices.tolist()
             faces = current_mesh.faces.tolist()
             face_centers = current_mesh.triangles_center.tolist()
+            
+            # Convert valley data to lists for JSON
+            valley_faces_list = current_valley_faces.tolist() if current_valley_faces is not None else []
+            valley_scores_list = current_valley_scores.tolist() if current_valley_scores is not None else []
             
             print(f"Converted to lists: vertices={len(vertices)}, faces={len(faces)}, centers={len(face_centers)}")
             
@@ -174,7 +186,9 @@ def upload_mesh():
                 'faces': faces,
                 'face_centers': face_centers,
                 'total_faces': len(current_mesh.faces),
-                'filename': filename
+                'filename': filename,
+                'valley_faces': valley_faces_list,
+                'valley_scores': valley_scores_list
             })
             
         except Exception as mesh_error:
@@ -211,17 +225,29 @@ def load_mesh():
             current_mesh, curvature_penalty_strength, user_seeds=None
         )
         
+        # Get valley faces for visualization
+        from segment_mesh import get_valley_faces
+        valley_face_mask, valley_scores = get_valley_faces(current_mesh)
+        current_valley_faces = valley_face_mask
+        current_valley_scores = valley_scores
+        
         # Prepare mesh data for Three.js
         vertices = current_mesh.vertices.tolist()
         faces = current_mesh.faces.tolist()
         face_centers = current_mesh.triangles_center.tolist()
         
+        # Convert valley data to lists for JSON
+        valley_faces_list = current_valley_faces.tolist() if current_valley_faces is not None else []
+        valley_scores_list = current_valley_scores.tolist() if current_valley_scores is not None else []
+                
         return jsonify({
             'success': True,
             'vertices': vertices,
             'faces': faces,
             'face_centers': face_centers,
-            'total_faces': len(current_mesh.faces)
+            'total_faces': len(current_mesh.faces),
+            'valley_faces': valley_faces_list,  # 
+            'valley_scores': valley_scores_list #
         })
         
     except Exception as e:
@@ -371,63 +397,79 @@ def segment_with_colored_seeds():
 def segment_automatic():
     """Perform automatic segmentation using the algorithm's seed selection."""
     global current_mesh, current_sparse_matrix, current_face_centers
-    
+
     try:
-        data = request.json
-        n_seeds = data.get('n_seeds', 10)
+        data = request.json or {}
+        n_seeds = int(data.get('n_seeds', 10))
         output_dir = data.get('output_dir', 'output')
-        
+
         if current_mesh is None:
             return jsonify({'success': False, 'error': 'No mesh loaded'})
-        
+
         print(f"Running automatic segmentation with {n_seeds} seeds...")
-        
-        # Build adjacency graph without user seeds for automatic selection
+
+        # Build adjacency graph for automatic selection
         current_sparse_matrix, current_face_centers = build_adjacency_graph(
             current_mesh, current_curvature_penalty, user_seeds=None
         )
-        
-        # Use the automatic seed selection from segment_mesh.py
+
+        # Automatic seed selection (should return face indices)
         seed_idx = select_seeds(current_face_centers, n_seeds)
-        print(f"Automatically selected seed indices: {seed_idx}")
-        
+        seed_idx = np.asarray(seed_idx, dtype=int)
+        print(f"Automatically selected seed indices: {seed_idx.tolist()}")
+
         # Perform segmentation
         face_labels = segment_mesh(current_sparse_matrix, seed_idx)
-        
+
         # Export segments
         export_segment(current_mesh, face_labels, seed_idx, output_dir)
-        
-        # Create segment colors for visualization
+
+        # Color palette for visualization
         colors = np.array([
             [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0],
             [1.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.5, 0.5, 0.5], [1.0, 0.5, 0.0],
             [0.5, 0.0, 1.0], [0.0, 0.5, 0.5], [0.8, 0.2, 0.2], [0.2, 0.8, 0.2],
             [0.2, 0.2, 0.8], [0.8, 0.8, 0.2], [0.8, 0.2, 0.8], [0.2, 0.8, 0.8]
         ])
-        
-        # Initialize all faces with default color
+
+        # Initialize face colors (default)
         total_faces = len(current_mesh.faces)
         face_colors = np.full((total_faces, 3), [0.7, 0.7, 0.7], dtype=np.float32)
-        
-        # Create mapping of seed indices to segments
-        seed_to_segment = {seed: i for i, seed in enumerate(seed_idx)}
-        
-        # Color segments
-        for face_idx, seed_face in face_labels.items():
-            if seed_face in seed_to_segment:
-                segment_id = seed_to_segment[seed_face]
-                color_idx = segment_id % len(colors)
-                face_colors[face_idx] = colors[color_idx]
-        
-        # Convert to list format for JSON serialization
+
+        # Map seed face -> segment index
+        seed_to_segment = {int(seed): i for i, seed in enumerate(seed_idx.tolist())}
+
+        # Color segments according to the selected seed mapping
+        if face_labels:
+            for face_idx, seed_face in face_labels.items():
+                if seed_face in seed_to_segment:
+                    segment_id = seed_to_segment[seed_face]
+                    color_idx = segment_id % len(colors)
+                    face_colors[int(face_idx)] = colors[color_idx]
+
+        # JSON-serializable lists
         face_colors_list = face_colors.tolist()
-        
-        print(f"Automatic segmentation completed with {len(seed_idx)} segments")
-        
+        seed_face_indices = [int(s) for s in seed_idx.tolist()]
+
+        # seed positions: centroids of the selected seed faces (useful for frontend markers)
+        try:
+            seed_positions = current_mesh.triangles_center[seed_idx].tolist()
+        except Exception:
+            # fallback: empty list if something unexpected happens
+            seed_positions = []
+
+        # seed colors aligned with seed order
+        seed_colors = [colors[i % len(colors)].tolist() for i in range(len(seed_face_indices))]
+
+        print(f"Automatic segmentation completed with {len(seed_face_indices)} segments")
+
         return jsonify({
             'success': True,
-            'segments_created': len(seed_idx),
+            'segments_created': len(seed_face_indices),
             'face_colors': face_colors_list,
+            'seed_face_indices': seed_face_indices,
+            'seed_positions': seed_positions,
+            'seed_colors': seed_colors,
             'output_dir': output_dir,
             'stats': {
                 'total_faces': total_faces,
@@ -435,7 +477,7 @@ def segment_automatic():
                 'coverage_ratio': len(face_labels) / total_faces if total_faces > 0 else 0.0
             }
         })
-        
+
     except Exception as e:
         import traceback
         print(f"Error in automatic segmentation: {e}")

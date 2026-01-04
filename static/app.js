@@ -1,1096 +1,1365 @@
 // Global variables
-        let scene, camera, renderer, controls;
-        let meshObject = null;
-        let selectedSeeds = [];
-        let seedSelectionMode = true; // Always enabled
-        let meshData = null;
-        let raycaster = new THREE.Raycaster();
-        let mouse = new THREE.Vector2();
-        let mouseDown = false;
-        let renderErrorCount = 0;
-        let maxRenderErrors = 10;
-        let currentSeedColor = 'red'; // Default seed color
-        let segmentationMode = 'manual'; // 'manual' or 'automatic'
+let scene, camera, renderer, controls;
+let meshObject = null;
+let selectedSeeds = [];
+let seedSelectionMode = true; // Always enabled
+let meshData = null;
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
+let mouseDown = false;
+let renderErrorCount = 0;
+let maxRenderErrors = 10;
+let currentSeedColor = 'red'; // Default seed color
+let segmentationMode = 'manual'; // 'manual' or 'automatic'
+let autoSeedMarkersGroup = null;
+let valleyFaces = null;
+let valleyScores = null;
+// to show seeds in automatic mode
+const SEED_MARKER_SCALE = 0.03;   // relative to model diagonal (default 0.01)
+const SEED_MARKER_MIN = 0.05;
+const MANUAL_SEED_RADIUS = 0.04;
+
+
+// Color mapping for seeds
+const seedColors = {
+    'red': [1.0, 0.0, 0.0],
+    'green': [0.0, 1.0, 0.0],
+    'blue': [0.0, 0.0, 1.0],
+    'yellow': [1.0, 1.0, 0.0],
+    'magenta': [1.0, 0.0, 1.0],
+    'cyan': [0.0, 1.0, 1.0],
+    'orange': [1.0, 0.5, 0.0],
+    'purple': [0.5, 0.0, 1.0]
+};
+
+// Simple orbit controls implementation
+class SimpleOrbitControls {
+    constructor(camera, domElement) {
+        this.camera = camera;
+        this.domElement = domElement;
+        this.isUserInteracting = false;
+        this.rotateSpeed = 1.0;
+        this.zoomSpeed = 0.1; // Reduced zoom speed
+        this.onMouseDown = this.onMouseDown.bind(this);
+        this.onMouseMove = this.onMouseMove.bind(this);
+        this.onMouseUp = this.onMouseUp.bind(this);
+        this.onWheel = this.onWheel.bind(this);
         
-        // Color mapping for seeds
-        const seedColors = {
-            'red': [1.0, 0.0, 0.0],
-            'green': [0.0, 1.0, 0.0],
-            'blue': [0.0, 0.0, 1.0],
-            'yellow': [1.0, 1.0, 0.0],
-            'magenta': [1.0, 0.0, 1.0],
-            'cyan': [0.0, 1.0, 1.0],
-            'orange': [1.0, 0.5, 0.0],
-            'purple': [0.5, 0.0, 1.0]
-        };
+        this.spherical = new THREE.Spherical();
+        this.sphericalDelta = new THREE.Spherical();
+        this.target = new THREE.Vector3();
         
-        // Simple orbit controls implementation
-        class SimpleOrbitControls {
-            constructor(camera, domElement) {
-                this.camera = camera;
-                this.domElement = domElement;
-                this.isUserInteracting = false;
-                this.rotateSpeed = 1.0;
-                this.zoomSpeed = 0.1; // Reduced zoom speed
-                this.onMouseDown = this.onMouseDown.bind(this);
-                this.onMouseMove = this.onMouseMove.bind(this);
-                this.onMouseUp = this.onMouseUp.bind(this);
-                this.onWheel = this.onWheel.bind(this);
-                
-                this.spherical = new THREE.Spherical();
-                this.sphericalDelta = new THREE.Spherical();
-                this.target = new THREE.Vector3();
-                
-                this.domElement.addEventListener('mousedown', this.onMouseDown);
-                this.domElement.addEventListener('mousemove', this.onMouseMove);
-                this.domElement.addEventListener('mouseup', this.onMouseUp);
-                this.domElement.addEventListener('wheel', this.onWheel, { passive: false });
-                
-                this.update();
-            }
-            
-            onMouseDown(event) {
-                this.isUserInteracting = true;
-                this.mouseX = event.clientX;
-                this.mouseY = event.clientY;
-            }
-            
-            onMouseMove(event) {
-                if (!this.isUserInteracting) return;
-                
-                const deltaX = event.clientX - this.mouseX;
-                const deltaY = event.clientY - this.mouseY;
-                
-                this.sphericalDelta.theta -= deltaX * 0.01;
-                this.sphericalDelta.phi -= deltaY * 0.01;
-                
-                this.mouseX = event.clientX;
-                this.mouseY = event.clientY;
-                
-                this.update();
-            }
-            
-            onMouseUp() {
-                this.isUserInteracting = false;
-            }
-            
-            onWheel(event) {
-                event.preventDefault(); // Prevent page scroll
-                const distance = this.camera.position.distanceTo(this.target);
-                const delta = event.deltaY * this.zoomSpeed * 0.001 * distance;
-                
-                // Limit zoom to prevent going too close or too far
-                const newDistance = distance + delta;
-                if (newDistance > 0.1 && newDistance < 100) {
-                    this.camera.position.multiplyScalar((distance + delta) / distance);
-                    this.update();
-                }
-            }
-            
-            update() {
-                this.spherical.setFromVector3(this.camera.position.clone().sub(this.target));
-                this.spherical.theta += this.sphericalDelta.theta;
-                this.spherical.phi += this.sphericalDelta.phi;
-                this.spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.spherical.phi));
-                
-                this.camera.position.setFromSpherical(this.spherical).add(this.target);
-                this.camera.lookAt(this.target);
-                
-                this.sphericalDelta.set(0, 0, 0);
-            }
+        this.domElement.addEventListener('mousedown', this.onMouseDown);
+        this.domElement.addEventListener('mousemove', this.onMouseMove);
+        this.domElement.addEventListener('mouseup', this.onMouseUp);
+        this.domElement.addEventListener('wheel', this.onWheel, { passive: false });
+        
+        this.update();
+    }
+    
+    onMouseDown(event) {
+        this.isUserInteracting = true;
+        this.mouseX = event.clientX;
+        this.mouseY = event.clientY;
+    }
+    
+    onMouseMove(event) {
+        if (!this.isUserInteracting) return;
+        
+        const deltaX = event.clientX - this.mouseX;
+        const deltaY = event.clientY - this.mouseY;
+        
+        this.sphericalDelta.theta -= deltaX * 0.01;
+        this.sphericalDelta.phi -= deltaY * 0.01;
+        
+        this.mouseX = event.clientX;
+        this.mouseY = event.clientY;
+        
+        this.update();
+    }
+    
+    onMouseUp() {
+        this.isUserInteracting = false;
+    }
+    
+    onWheel(event) {
+        event.preventDefault(); // Prevent page scroll
+        const distance = this.camera.position.distanceTo(this.target);
+        const delta = event.deltaY * this.zoomSpeed * 0.001 * distance;
+        
+        // Limit zoom to prevent going too close or too far
+        const newDistance = distance + delta;
+        if (newDistance > 0.1 && newDistance < 100) {
+            this.camera.position.multiplyScalar((distance + delta) / distance);
+            this.update();
+        }
+    }
+    
+    update() {
+        this.spherical.setFromVector3(this.camera.position.clone().sub(this.target));
+        this.spherical.theta += this.sphericalDelta.theta;
+        this.spherical.phi += this.sphericalDelta.phi;
+        this.spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.spherical.phi));
+        
+        this.camera.position.setFromSpherical(this.spherical).add(this.target);
+        this.camera.lookAt(this.target);
+        
+        this.sphericalDelta.set(0, 0, 0);
+    }
+}
+
+// Debug function
+function updateDebugInfo(text) {
+    const debugInfo = document.getElementById('debugInfo');
+    if (debugInfo) {
+        debugInfo.innerHTML = `<i class="fas fa-terminal"></i> ${text}`;
+    }
+    console.log(text);
+}
+
+// Initialize Three.js scene
+function initThreeJS() {
+    try {
+        updateDebugInfo('Initializing Three.js...');
+        const viewer = document.getElementById('viewer');
+        
+        if (!viewer) {
+            throw new Error('Viewer element not found');
         }
         
-        // Debug function
-        function updateDebugInfo(text) {
-            const debugInfo = document.getElementById('debugInfo');
-            if (debugInfo) {
-                debugInfo.innerHTML = `<i class="fas fa-terminal"></i> ${text}`;
-            }
-            console.log(text);
-        }
+        // Scene
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+        updateDebugInfo('Scene created');
         
-        // Initialize Three.js scene
-        function initThreeJS() {
-            try {
-                updateDebugInfo('Initializing Three.js...');
-                const viewer = document.getElementById('viewer');
-                
-                if (!viewer) {
-                    throw new Error('Viewer element not found');
-                }
-                
-                // Scene
-                scene = new THREE.Scene();
-                scene.background = new THREE.Color(0x222222);
-                updateDebugInfo('Scene created');
-                
-                // Camera
-                camera = new THREE.PerspectiveCamera(75, viewer.clientWidth / viewer.clientHeight, 0.1, 1000);
-                camera.position.set(0, 0, 5);
-                updateDebugInfo('Camera created');
-                
-                // Renderer
-                renderer = new THREE.WebGLRenderer({ antialias: true });
-                renderer.setSize(viewer.clientWidth, viewer.clientHeight);
-                renderer.setClearColor(0x222222);
-                viewer.appendChild(renderer.domElement);
-                updateDebugInfo('Renderer created and added to DOM');
-                
-                // Simple controls
-                controls = new SimpleOrbitControls(camera, renderer.domElement);
-                updateDebugInfo('Controls initialized');
-                
-                // Lighting - more comprehensive setup
-                const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
-                scene.add(ambientLight);
-                
-                const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
-                directionalLight1.position.set(1, 1, 1);
-                scene.add(directionalLight1);
-                
-                const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
-                directionalLight2.position.set(-1, -1, -1);
-                scene.add(directionalLight2);
-                
-                updateDebugInfo('Enhanced lighting added');
-                
-                // Event listeners
-                renderer.domElement.addEventListener('click', onMouseClick);
-                window.addEventListener('resize', onWindowResize);
-                
-                // Animation loop
-                animate();
-                updateDebugInfo('Three.js initialization complete');
-                
-                // Add a test cube to verify rendering
-                const geometry = new THREE.BoxGeometry(1, 1, 1);
-                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-                const testCube = new THREE.Mesh(geometry, material);
-                scene.add(testCube);
-                updateDebugInfo('Test cube added - you should see a green cube');
-                
-            } catch (error) {
-                updateDebugInfo('Error initializing Three.js: ' + error.message);
-                showStatus('Error initializing 3D viewer: ' + error.message, 'error');
-            }
-        }
+        // Camera
+        camera = new THREE.PerspectiveCamera(75, viewer.clientWidth / viewer.clientHeight, 0.1, 1000);
+        camera.position.set(0, 0, 5);
+        updateDebugInfo('Camera created');
         
-        function restartAnimation() {
-            renderErrorCount = 0;
-            updateDebugInfo('Restarting animation loop');
-            animate();
-        }
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+        renderer.setClearColor(0x222222);
+        viewer.appendChild(renderer.domElement);
+        updateDebugInfo('Renderer created and added to DOM');
         
-        function clearScene() {
-            if (meshObject) {
-                scene.remove(meshObject);
-                if (meshObject.geometry) {
-                    meshObject.geometry.dispose();
-                }
-                if (meshObject.material) {
-                    if (meshObject.material.map) meshObject.material.map.dispose();
-                    meshObject.material.dispose();
-                }
-                meshObject = null;
-                updateDebugInfo('Scene cleared');
-            }
-        }
+        // Simple controls
+        controls = new SimpleOrbitControls(camera, renderer.domElement);
+        updateDebugInfo('Controls initialized');
         
-        function animate() {
-            try {
-                if (renderer && scene && camera) {
-                    renderer.render(scene, camera);
-                    renderErrorCount = 0; // Reset error count on successful render
-                }
-            } catch (renderError) {
-                renderErrorCount++;
-                console.error('Render error:', renderError);
-                updateDebugInfo(`Render error ${renderErrorCount}: ${renderError.message}`);
-                
-                // If too many errors, stop the animation loop and try to recover
-                if (renderErrorCount >= maxRenderErrors) {
-                    updateDebugInfo('Too many render errors, stopping animation loop');
-                    return; // Stop the animation loop
-                }
+        // Lighting - more comprehensive setup
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
+        scene.add(ambientLight);
+        
+        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight1.position.set(1, 1, 1);
+        scene.add(directionalLight1);
+        
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+        directionalLight2.position.set(-1, -1, -1);
+        scene.add(directionalLight2);
+        
+        updateDebugInfo('Enhanced lighting added');
+        
+        // Event listeners
+        renderer.domElement.addEventListener('click', onMouseClick);
+        window.addEventListener('resize', onWindowResize);
+        
+        // Animation loop
+        animate();
+        updateDebugInfo('Three.js initialization complete');
+        
+        // Add a test cube to verify rendering
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const testCube = new THREE.Mesh(geometry, material);
+        scene.add(testCube);
+        updateDebugInfo('Test cube added - you should see a green cube');
+        
+    } catch (error) {
+        updateDebugInfo('Error initializing Three.js: ' + error.message);
+        showStatus('Error initializing 3D viewer: ' + error.message, 'error');
+    }
+}
+
+function restartAnimation() {
+    renderErrorCount = 0;
+    updateDebugInfo('Restarting animation loop');
+    animate();
+}
+
+function clearScene() {
+    if (meshObject) {
+        scene.remove(meshObject);
+        if (meshObject.geometry) {
+            meshObject.geometry.dispose();
+        }
+        if (meshObject.material) {
+            if (meshObject.material.map) meshObject.material.map.dispose();
+            meshObject.material.dispose();
+        }
+        meshObject = null;
+        updateDebugInfo('Scene cleared');
+    }
+}
+
+function animate() {
+    try {
+        if (renderer && scene && camera) {
+            renderer.render(scene, camera);
+            renderErrorCount = 0; // Reset error count on successful render
+        }
+    } catch (renderError) {
+        renderErrorCount++;
+        console.error('Render error:', renderError);
+        updateDebugInfo(`Render error ${renderErrorCount}: ${renderError.message}`);
+        
+        // If too many errors, stop the animation loop and try to recover
+        if (renderErrorCount >= maxRenderErrors) {
+            updateDebugInfo('Too many render errors, stopping animation loop');
+            return; // Stop the animation loop
+        }
+    }
+    
+    // Continue animation loop only if not too many errors
+    if (renderErrorCount < maxRenderErrors) {
+        requestAnimationFrame(animate);
+    }
+}
+
+function selectSeedColor(color, element) {
+    currentSeedColor = color;
+    
+    // Update UI to show active color
+    document.querySelectorAll('.color-option').forEach(option => {
+        option.classList.remove('active');
+    });
+    element.classList.add('active');
+    
+    showStatus(`Selected ${color} color for new seeds`, 'info');
+}
+
+function setSegmentationMode(mode) {
+    segmentationMode = mode;
+    
+    const manualBtn = document.getElementById('manualModeBtn');
+    const automaticBtn = document.getElementById('automaticModeBtn');
+    const manualControls = document.getElementById('manualControls');
+    const automaticControls = document.getElementById('automaticControls');
+    
+    if (mode === 'manual') {
+        manualBtn.classList.add('active');
+        automaticBtn.classList.remove('active');
+        manualControls.style.display = 'block';
+        automaticControls.style.display = 'none';
+        seedSelectionMode = true;
+    } else {
+        manualBtn.classList.remove('active');
+        automaticBtn.classList.add('active');
+        manualControls.style.display = 'none';
+        automaticControls.style.display = 'block';
+        seedSelectionMode = false;
+        clearSeeds();
+    }
+    
+    updateSegmentButtonState();
+    showStatus(`Switched to ${mode} segmentation mode`, 'info');
+}
+
+function updateSegmentButtonState() {
+    const segmentBtn = document.getElementById('segmentBtn');
+    
+    if (!meshObject) {
+        segmentBtn.disabled = true;
+        return;
+    }
+    
+    if (segmentationMode === 'manual') {
+        segmentBtn.disabled = selectedSeeds.length === 0;
+    } else {
+        segmentBtn.disabled = false;
+    }
+}
+
+function onWindowResize() {
+    const viewer = document.getElementById('viewer');
+    camera.aspect = viewer.clientWidth / viewer.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+}
+
+function onMouseClick(event) {
+    // Only handle clicks in manual mode
+    if (segmentationMode !== 'manual') {
+        return;
+    }
+    
+    if (!meshObject || controls.isUserInteracting) {
+        return;
+    }
+    
+    const viewer = document.getElementById('viewer');
+    const rect = viewer.getBoundingClientRect();
+    
+    mouse.x = ((event.clientX - rect.left) / viewer.clientWidth) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / viewer.clientHeight) * 2 + 1;
+    
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObject(meshObject);
+    
+    if (intersects.length > 0) {
+        const point = intersects[0].point;
+        updateDebugInfo(`Seed click detected at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
+        addSeed(point.x, point.y, point.z);
+    } else {
+        updateDebugInfo('No intersection found during seed click');
+    }
+}
+
+function handleFileSelect() {
+    const fileInput = document.getElementById('meshFile');
+    const uploadBtn = document.getElementById('uploadBtn');
+    
+    if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        const fileName = file.name.toLowerCase();
+        if (fileName.endsWith('.obj') || fileName.endsWith('.glb') || fileName.endsWith('.gltf')) {
+            uploadBtn.disabled = false;
+            uploadBtn.innerHTML = '<i class="fas fa-upload"></i> Upload';
+            const fileType = fileName.endsWith('.obj') ? 'OBJ' : 
+                            fileName.endsWith('.glb') ? 'GLB (will be converted to OBJ)' : 
+                            'GLTF (will be converted to OBJ)';
+            showStatus(`📁 File ready: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) - ${fileType}`, 'info');
+        } else {
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Invalid File Type';
+            showStatus('⚠️ Please select a .obj, .glb, or .gltf file', 'error');
+        }
+    } else {
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<i class="fas fa-upload"></i> Upload';
+    }
+}
+
+async function uploadMesh() {
+    const fileInput = document.getElementById('meshFile');
+    const curvaturePenalty = parseFloat(document.getElementById('curvaturePenalty').value);
+    
+    if (!fileInput.files.length) {
+        showStatus('Please select a file first', 'error');
+        return;
+    }
+    
+    const file = fileInput.files[0];
+    const fileName = file.name.toLowerCase();
+    const isGlbGltf = fileName.endsWith('.glb') || fileName.endsWith('.gltf');
+    
+    showLoading(true);
+    
+    if (isGlbGltf) {
+        showStatus('Uploading and converting GLB/GLTF to OBJ format...', 'info');
+        updateDebugInfo('Converting GLB/GLTF file to OBJ...');
+    } else {
+        showStatus('Uploading and processing mesh...', 'info');
+        updateDebugInfo('Uploading file to server...');
+    }
+    
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('curvature_penalty_strength', curvaturePenalty);
+        
+        const response = await fetch('/upload_mesh', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        updateDebugInfo('Server response received for upload');
+        
+        // Debug: Log the complete server response
+        console.log('Complete server response:', result);
+        updateDebugInfo(`Server response keys: ${Object.keys(result).join(', ')}`);
+        
+        if (result.success) {
+            // Debug: Check each data field
+            updateDebugInfo(`Response has vertices: ${!!result.vertices}, faces: ${!!result.faces}`);
+            if (result.vertices) updateDebugInfo(`Vertices length: ${result.vertices.length}`);
+            if (result.faces) updateDebugInfo(`Faces length: ${result.faces.length}`);
+            
+            // Debug: Validate mesh data
+            if (!result.vertices || !result.faces) {
+                updateDebugInfo('ERROR: Invalid mesh data - missing vertices or faces');
+                showStatus('Error: Invalid mesh data received', 'error');
+                return;
             }
             
-            // Continue animation loop only if not too many errors
-            if (renderErrorCount < maxRenderErrors) {
-                requestAnimationFrame(animate);
-            }
-        }
-        
-        function selectSeedColor(color, element) {
-            currentSeedColor = color;
-            
-            // Update UI to show active color
-            document.querySelectorAll('.color-option').forEach(option => {
-                option.classList.remove('active');
-            });
-            element.classList.add('active');
-            
-            showStatus(`Selected ${color} color for new seeds`, 'info');
-        }
-        
-        function setSegmentationMode(mode) {
-            segmentationMode = mode;
-            
-            const manualBtn = document.getElementById('manualModeBtn');
-            const automaticBtn = document.getElementById('automaticModeBtn');
-            const manualControls = document.getElementById('manualControls');
-            const automaticControls = document.getElementById('automaticControls');
-            
-            if (mode === 'manual') {
-                manualBtn.classList.add('active');
-                automaticBtn.classList.remove('active');
-                manualControls.style.display = 'block';
-                automaticControls.style.display = 'none';
-                seedSelectionMode = true;
-            } else {
-                manualBtn.classList.remove('active');
-                automaticBtn.classList.add('active');
-                manualControls.style.display = 'none';
-                automaticControls.style.display = 'block';
-                seedSelectionMode = false;
-                clearSeeds();
+            if (result.vertices.length === 0 || result.faces.length === 0) {
+                updateDebugInfo('ERROR: Empty mesh data');
+                showStatus('Error: Mesh has no vertices or faces', 'error');
+                return;
             }
             
+            updateDebugInfo(`Valid mesh data: ${result.vertices.length} vertices, ${result.faces.length} faces`);
+            
+            // IMPORTANT: Set meshData BEFORE calling displayMesh
+            meshData = result;
+            
+            displayMesh(result);
+            showStatus(`🚀 Mesh uploaded and loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
+            clearSeeds();
             updateSegmentButtonState();
-            showStatus(`Switched to ${mode} segmentation mode`, 'info');
+        } else {
+            updateDebugInfo('Server error: ' + result.error);
+            showStatus(`Error processing mesh: ${result.error}`, 'error');
         }
+    } catch (error) {
+        updateDebugInfo('Network error: ' + error.message);
+        showStatus(`Upload error: ${error.message}`, 'error');
+    } finally {
+        showLoading(false);
+    }
+}
 
-        function updateSegmentButtonState() {
-            const segmentBtn = document.getElementById('segmentBtn');
-            
-            if (!meshObject) {
-                segmentBtn.disabled = true;
-                return;
+function showStatus(message, type = 'info') {
+    const statusContainer = document.getElementById('status');
+    const statusDiv = document.createElement('div');
+    statusDiv.className = `status ${type}`;
+    
+    // Add appropriate icon
+    const icon = type === 'success' ? 'fa-check-circle' : 
+                type === 'error' ? 'fa-exclamation-circle' : 
+                'fa-info-circle';
+    
+    statusDiv.innerHTML = `<i class="fas ${icon}" style="margin-right: 8px;"></i>${message}`;
+    statusContainer.appendChild(statusDiv);
+    
+    // Auto-remove after 5 seconds for non-error messages
+    if (type !== 'error') {
+        setTimeout(() => {
+            if (statusDiv.parentNode) {
+                statusDiv.style.animation = 'slideOut 0.3s ease forwards';
+                setTimeout(() => statusDiv.remove(), 300);
             }
-            
-            if (segmentationMode === 'manual') {
-                segmentBtn.disabled = selectedSeeds.length === 0;
-            } else {
-                segmentBtn.disabled = false;
-            }
-        }
+        }, 5000);
+    }
+}
 
-        function onWindowResize() {
-            const viewer = document.getElementById('viewer');
-            camera.aspect = viewer.clientWidth / viewer.clientHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(viewer.clientWidth, viewer.clientHeight);
-        }
+function showLoading(show) {
+    document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+}
+
+async function loadMesh() {
+    const meshPath = document.getElementById('meshPath').value;
+    const curvaturePenalty = parseFloat(document.getElementById('curvaturePenalty').value);
+    
+    showLoading(true);
+    showStatus('Loading mesh...', 'info');
+    updateDebugInfo('Loading mesh from server...');
+    
+    try {
+        const response = await fetch('/load_mesh', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                mesh_path: meshPath,
+                curvature_penalty_strength: curvaturePenalty
+            })
+        });
         
-        function onMouseClick(event) {
-            // Only handle clicks in manual mode
-            if (segmentationMode !== 'manual') {
+        const result = await response.json();
+        updateDebugInfo('Server response received');
+        
+        // Debug: Log the complete server response
+        console.log('Complete server response:', result);
+        updateDebugInfo(`Server response keys: ${Object.keys(result).join(', ')}`);
+        
+        if (result.success) {
+            // Debug: Check each data field
+            updateDebugInfo(`Response has vertices: ${!!result.vertices}, faces: ${!!result.faces}`);
+            if (result.vertices) updateDebugInfo(`Vertices length: ${result.vertices.length}`);
+            if (result.faces) updateDebugInfo(`Faces length: ${result.faces.length}`);
+            
+            meshData = result;
+            
+            // Debug: Validate mesh data
+            if (!result.vertices || !result.faces) {
+                updateDebugInfo('ERROR: Invalid mesh data - missing vertices or faces');
+                showStatus('Error: Invalid mesh data received', 'error');
                 return;
             }
             
-            if (!meshObject || controls.isUserInteracting) {
+            if (result.vertices.length === 0 || result.faces.length === 0) {
+                updateDebugInfo('ERROR: Empty mesh data');
+                showStatus('Error: Mesh has no vertices or faces', 'error');
                 return;
             }
             
-            const viewer = document.getElementById('viewer');
-            const rect = viewer.getBoundingClientRect();
+            updateDebugInfo(`Valid mesh data: ${result.vertices.length} vertices, ${result.faces.length} faces`);
             
-            mouse.x = ((event.clientX - rect.left) / viewer.clientWidth) * 2 - 1;
-            mouse.y = -((event.clientY - rect.top) / viewer.clientHeight) * 2 + 1;
-            
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObject(meshObject);
-            
-            if (intersects.length > 0) {
-                const point = intersects[0].point;
-                updateDebugInfo(`Seed click detected at: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}, ${point.z.toFixed(3)}`);
-                addSeed(point.x, point.y, point.z);
-            } else {
-                updateDebugInfo('No intersection found during seed click');
-            }
-        }
-        
-        function handleFileSelect() {
-            const fileInput = document.getElementById('meshFile');
-            const uploadBtn = document.getElementById('uploadBtn');
-            
-            if (fileInput.files.length > 0) {
-                const file = fileInput.files[0];
-                const fileName = file.name.toLowerCase();
-                if (fileName.endsWith('.obj') || fileName.endsWith('.glb') || fileName.endsWith('.gltf')) {
-                    uploadBtn.disabled = false;
-                    uploadBtn.innerHTML = '<i class="fas fa-upload"></i> Upload';
-                    const fileType = fileName.endsWith('.obj') ? 'OBJ' : 
-                                   fileName.endsWith('.glb') ? 'GLB (will be converted to OBJ)' : 
-                                   'GLTF (will be converted to OBJ)';
-                    showStatus(`📁 File ready: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) - ${fileType}`, 'info');
-                } else {
-                    uploadBtn.disabled = true;
-                    uploadBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Invalid File Type';
-                    showStatus('⚠️ Please select a .obj, .glb, or .gltf file', 'error');
-                }
-            } else {
-                uploadBtn.disabled = true;
-                uploadBtn.innerHTML = '<i class="fas fa-upload"></i> Upload';
-            }
-        }
-        
-        async function uploadMesh() {
-            const fileInput = document.getElementById('meshFile');
-            const curvaturePenalty = parseFloat(document.getElementById('curvaturePenalty').value);
-            
-            if (!fileInput.files.length) {
-                showStatus('Please select a file first', 'error');
-                return;
-            }
-            
-            const file = fileInput.files[0];
-            const fileName = file.name.toLowerCase();
-            const isGlbGltf = fileName.endsWith('.glb') || fileName.endsWith('.gltf');
-            
-            showLoading(true);
-            
-            if (isGlbGltf) {
-                showStatus('Uploading and converting GLB/GLTF to OBJ format...', 'info');
-                updateDebugInfo('Converting GLB/GLTF file to OBJ...');
-            } else {
-                showStatus('Uploading and processing mesh...', 'info');
-                updateDebugInfo('Uploading file to server...');
-            }
-            
-            try {
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('curvature_penalty_strength', curvaturePenalty);
-                
-                const response = await fetch('/upload_mesh', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const result = await response.json();
-                updateDebugInfo('Server response received for upload');
-                
-                // Debug: Log the complete server response
-                console.log('Complete server response:', result);
-                updateDebugInfo(`Server response keys: ${Object.keys(result).join(', ')}`);
-                
-                if (result.success) {
-                    // Debug: Check each data field
-                    updateDebugInfo(`Response has vertices: ${!!result.vertices}, faces: ${!!result.faces}`);
-                    if (result.vertices) updateDebugInfo(`Vertices length: ${result.vertices.length}`);
-                    if (result.faces) updateDebugInfo(`Faces length: ${result.faces.length}`);
-                    
-                    meshData = result;
-                    
-                    // Debug: Validate mesh data
-                    if (!result.vertices || !result.faces) {
-                        updateDebugInfo('ERROR: Invalid mesh data - missing vertices or faces');
-                        showStatus('Error: Invalid mesh data received', 'error');
-                        return;
-                    }
-                    
-                    if (result.vertices.length === 0 || result.faces.length === 0) {
-                        updateDebugInfo('ERROR: Empty mesh data');
-                        showStatus('Error: Mesh has no vertices or faces', 'error');
-                        return;
-                    }
-                    
-                    updateDebugInfo(`Valid mesh data: ${result.vertices.length} vertices, ${result.faces.length} faces`);
-                    
-                    displayMesh(result);
-                    showStatus(`🚀 Mesh uploaded and loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
-                    clearSeeds();
-                    updateSegmentButtonState();
-                } else {
-                    updateDebugInfo('Server error: ' + result.error);
-                    showStatus(`Error processing mesh: ${result.error}`, 'error');
-                }
-            } catch (error) {
-                updateDebugInfo('Network error: ' + error.message);
-                showStatus(`Upload error: ${error.message}`, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        function showStatus(message, type = 'info') {
-            const statusContainer = document.getElementById('status');
-            const statusDiv = document.createElement('div');
-            statusDiv.className = `status ${type}`;
-            
-            // Add appropriate icon
-            const icon = type === 'success' ? 'fa-check-circle' : 
-                        type === 'error' ? 'fa-exclamation-circle' : 
-                        'fa-info-circle';
-            
-            statusDiv.innerHTML = `<i class="fas ${icon}" style="margin-right: 8px;"></i>${message}`;
-            statusContainer.appendChild(statusDiv);
-            
-            // Auto-remove after 5 seconds for non-error messages
-            if (type !== 'error') {
-                setTimeout(() => {
-                    if (statusDiv.parentNode) {
-                        statusDiv.style.animation = 'slideOut 0.3s ease forwards';
-                        setTimeout(() => statusDiv.remove(), 300);
-                    }
-                }, 5000);
-            }
-        }
-        
-        function showLoading(show) {
-            document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
-        }
-        
-        async function loadMesh() {
-            const meshPath = document.getElementById('meshPath').value;
-            const curvaturePenalty = parseFloat(document.getElementById('curvaturePenalty').value);
-            
-            showLoading(true);
-            showStatus('Loading mesh...', 'info');
-            updateDebugInfo('Loading mesh from server...');
-            
-            try {
-                const response = await fetch('/load_mesh', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        mesh_path: meshPath,
-                        curvature_penalty_strength: curvaturePenalty
-                    })
-                });
-                
-                const result = await response.json();
-                updateDebugInfo('Server response received');
-                
-                // Debug: Log the complete server response
-                console.log('Complete server response:', result);
-                updateDebugInfo(`Server response keys: ${Object.keys(result).join(', ')}`);
-                
-                if (result.success) {
-                    // Debug: Check each data field
-                    updateDebugInfo(`Response has vertices: ${!!result.vertices}, faces: ${!!result.faces}`);
-                    if (result.vertices) updateDebugInfo(`Vertices length: ${result.vertices.length}`);
-                    if (result.faces) updateDebugInfo(`Faces length: ${result.faces.length}`);
-                    
-                    meshData = result;
-                    
-                    // Debug: Validate mesh data
-                    if (!result.vertices || !result.faces) {
-                        updateDebugInfo('ERROR: Invalid mesh data - missing vertices or faces');
-                        showStatus('Error: Invalid mesh data received', 'error');
-                        return;
-                    }
-                    
-                    if (result.vertices.length === 0 || result.faces.length === 0) {
-                        updateDebugInfo('ERROR: Empty mesh data');
-                        showStatus('Error: Mesh has no vertices or faces', 'error');
-                        return;
-                    }
-                    
-                    updateDebugInfo(`Valid mesh data: ${result.vertices.length} vertices, ${result.faces.length} faces`);
-                    
-                    displayMesh(result);
-                    showStatus(`🚀 Mesh loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
-                    clearSeeds();
-                    updateSegmentButtonState();
-                } else {
-                    updateDebugInfo('Server error: ' + result.error);
-                    showStatus(`Error loading mesh: ${result.error}`, 'error');
-                }
-            } catch (error) {
-                updateDebugInfo('Network error: ' + error.message);
-                showStatus(`Network error: ${error.message}`, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        function displayMesh(data) {
-            try {
-                updateDebugInfo(`Displaying mesh: ${data.vertices.length} vertices, ${data.faces.length} faces`);
-                
-                // Clear existing scene first
-                clearScene();
-                
-                // Remove test cube
-                scene.traverse((child) => {
-                    if (child.geometry && child.geometry.type === 'BoxGeometry') {
-                        scene.remove(child);
-                    }
-                });
-                
-                // Validate input data
-                if (!data.vertices || !data.faces || data.vertices.length === 0 || data.faces.length === 0) {
-                    updateDebugInfo('ERROR: Invalid or empty mesh data');
-                    return;
-                }
-                
-                // Create geometry
-                const geometry = new THREE.BufferGeometry();
-                
-                // Convert vertices to flat array
-                const vertices = [];
-                for (let i = 0; i < data.vertices.length; i++) {
-                    const vertex = data.vertices[i];
-                    if (vertex && vertex.length >= 3) {
-                        vertices.push(vertex[0], vertex[1], vertex[2]);
-                    } else {
-                        updateDebugInfo(`ERROR: Invalid vertex at index ${i}: ${vertex}`);
-                        return;
-                    }
-                }
-                
-                // Convert faces to indices array and validate
-                const indices = [];
-                let maxVertexIndex = data.vertices.length - 1;
-                
-                for (let i = 0; i < data.faces.length; i++) {
-                    const face = data.faces[i];
-                    if (face && face.length >= 3) {
-                        // Validate face indices
-                        if (face[0] <= maxVertexIndex && face[1] <= maxVertexIndex && face[2] <= maxVertexIndex &&
-                            face[0] >= 0 && face[1] >= 0 && face[2] >= 0) {
-                            indices.push(face[0], face[1], face[2]);
-                        } else {
-                            updateDebugInfo(`ERROR: Invalid face indices at ${i}: [${face[0]}, ${face[1]}, ${face[2]}], max vertex: ${maxVertexIndex}`);
-                            return;
-                        }
-                    } else {
-                        updateDebugInfo(`ERROR: Invalid face at index ${i}: ${face}`);
-                        return;
-                    }
-                }
-                
-                updateDebugInfo(`Processed: ${vertices.length/3} vertices, ${indices.length/3} faces`);
-                
-                // Debug: Check data ranges
-                let minVert = [Infinity, Infinity, Infinity];
-                let maxVert = [-Infinity, -Infinity, -Infinity];
-                for (let i = 0; i < vertices.length; i += 3) {
-                    minVert[0] = Math.min(minVert[0], vertices[i]);
-                    minVert[1] = Math.min(minVert[1], vertices[i + 1]);
-                    minVert[2] = Math.min(minVert[2], vertices[i + 2]);
-                    maxVert[0] = Math.max(maxVert[0], vertices[i]);
-                    maxVert[1] = Math.max(maxVert[1], vertices[i + 1]);
-                    maxVert[2] = Math.max(maxVert[2], vertices[i + 2]);
-                }
-                
-                updateDebugInfo(`Mesh bounds: min(${minVert[0].toFixed(2)}, ${minVert[1].toFixed(2)}, ${minVert[2].toFixed(2)}) max(${maxVert[0].toFixed(2)}, ${maxVert[1].toFixed(2)}, ${maxVert[2].toFixed(2)})`);
-                
-                // Create buffer geometry with proper buffer management
-                const positionAttribute = new THREE.BufferAttribute(new Float32Array(vertices), 3);
-                positionAttribute.needsUpdate = true;
-                geometry.setAttribute('position', positionAttribute);
-                
-                // Only set indices if we have valid ones
-                if (indices.length > 0) {
-                    // Convert to appropriate array type based on vertex count
-                    let indexAttribute;
-                    if (maxVertexIndex < 65536) {
-                        indexAttribute = new THREE.BufferAttribute(new Uint16Array(indices), 1);
-                    } else {
-                        indexAttribute = new THREE.BufferAttribute(new Uint32Array(indices), 1);
-                    }
-                    indexAttribute.needsUpdate = true;
-                    geometry.setIndex(indexAttribute);
-                    updateDebugInfo(`Set indices: ${indices.length} elements (${indexAttribute.array.constructor.name})`);
-                } else {
-                    updateDebugInfo('ERROR: No valid indices created');
-                    return;
-                }
-                
-                // Compute normals AFTER setting position and indices
-                try {
-                    geometry.computeVertexNormals();
-                    updateDebugInfo('Computed vertex normals');
-                } catch (normalError) {
-                    updateDebugInfo(`Warning: Could not compute normals: ${normalError.message}`);
-                }
-                
-                // Get bounding box
-                geometry.computeBoundingBox();
-                if (!geometry.boundingBox) {
-                    updateDebugInfo('ERROR: Could not compute bounding box');
-                    return;
-                }
-                
-                const box = geometry.boundingBox;
-                const center = new THREE.Vector3();
-                box.getCenter(center);
-                const size = new THREE.Vector3();
-                box.getSize(size);
-                const maxDim = Math.max(size.x, size.y, size.z);
-                
-                updateDebugInfo(`Bounding box: center(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}) size(${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)}) maxDim: ${maxDim.toFixed(2)}`);
-                
-                // Create material - start with solid, not wireframe to avoid Three.js wireframe bug
-                const material = new THREE.MeshLambertMaterial({
-                    color: 0x888888,
-                    side: THREE.DoubleSide
-                });
-                
-                // Create mesh
-                meshObject = new THREE.Mesh(geometry, material);
-                
-                // Reset position and scale
-                meshObject.position.set(0, 0, 0);
-                meshObject.scale.set(1, 1, 1);
-                
-                // Center the mesh
-                meshObject.position.copy(center).negate();
-                
-                // Scale the mesh to fit in a 4-unit cube
-                if (maxDim > 0) {
-                    const scale = 4 / maxDim;
-                    meshObject.scale.setScalar(scale);
-                    updateDebugInfo(`Applied scale: ${scale.toFixed(4)}`);
-                } else {
-                    updateDebugInfo('Warning: mesh has zero size!');
-                }
-                
-                // Add to scene
-                scene.add(meshObject);
-                updateDebugInfo('Mesh added to scene (solid mode)');
-                
-                // Position camera to see the mesh better
-                camera.position.set(6, 6, 6);
-                camera.lookAt(0, 0, 0);
-                controls.target.set(0, 0, 0);
-                controls.update();
-                
-                updateDebugInfo('Camera positioned - mesh should be visible');
-                
-                // Force a safe render
-                try {
-                    renderer.render(scene, camera);
-                    updateDebugInfo('Initial render successful');
-                } catch (renderError) {
-                    updateDebugInfo('Initial render failed: ' + renderError.message);
-                }
-                
-            } catch (error) {
-                updateDebugInfo('Error displaying mesh: ' + error.message);
-                showStatus('Error displaying mesh: ' + error.message, 'error');
-                console.error('Full error:', error);
-            }
-        }
-        
-        function toggleWireframe() {
-            if (meshObject && meshObject.material) {
-                const isWireframe = meshObject.material.wireframe;
-                
-                if (isWireframe) {
-                    // Switch to solid
-                    meshObject.material = new THREE.MeshLambertMaterial({
-                        color: 0x888888,
-                        side: THREE.DoubleSide
-                    });
-                    updateDebugInfo('Switched to solid mode');
-                } else {
-                    // Switch to wireframe - create a new wireframe material
-                    meshObject.material = new THREE.MeshBasicMaterial({
-                        color: 0x00ff00,
-                        wireframe: true,
-                        side: THREE.DoubleSide
-                    });
-                    updateDebugInfo('Switched to wireframe mode');
-                }
-            } else {
-                updateDebugInfo('No mesh object to toggle');
-            }
-        }
-        
-        function addSeed(x, y, z) {
-            const seedData = {
-                position: [x, y, z],
-                color: currentSeedColor,
-                colorRGB: seedColors[currentSeedColor]
-            };
-            selectedSeeds.push(seedData);
-            updateSeedDisplay();
-            
-            // Add visual marker with the selected color
-            const geometry = new THREE.SphereGeometry(0.04, 16, 16);
-            const colorRGB = seedColors[currentSeedColor];
-            const material = new THREE.MeshLambertMaterial({ 
-                color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
-                opacity: 0.9,
-                transparent: true,
-                emissive: new THREE.Color(colorRGB[0] * 0.2, colorRGB[1] * 0.2, colorRGB[2] * 0.2),
-                emissiveIntensity: 0.3
-            });
-            const marker = new THREE.Mesh(geometry, material);
-            marker.position.set(x, y, z);
-            marker.userData = { 
-                isSeedMarker: true, 
-                seedIndex: selectedSeeds.length - 1,
-                seedColor: currentSeedColor
-            };
-            scene.add(marker);
-            
-            showStatus(`${currentSeedColor.charAt(0).toUpperCase() + currentSeedColor.slice(1)} seed ${selectedSeeds.length} added at (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`, 'success');
-        }
-        
-        function toggleSeedMarkers() {
-            // Check if there are any seed markers visible
-            let markersVisible = false;
-            scene.traverse((child) => {
-                if (child.userData && child.userData.isSeedMarker) {
-                    markersVisible = child.visible;
-                    return; // Exit early since we found one
-                }
-            });
-            
-            // Toggle visibility of all seed markers
-            scene.traverse((child) => {
-                if (child.userData && child.userData.isSeedMarker) {
-                    child.visible = !markersVisible;
-                }
-            });
-            
-            const status = markersVisible ? 'hidden' : 'shown';
-            showStatus(`Seed markers ${status}`, 'info');
-        }
-        
-        function removeSeedMarkers() {
-            // Remove visual markers from scene
-            const markersToRemove = [];
-            scene.traverse((child) => {
-                if (child.userData && child.userData.isSeedMarker) {
-                    markersToRemove.push(child);
-                }
-            });
-            markersToRemove.forEach(marker => {
-                scene.remove(marker);
-                if (marker.geometry) marker.geometry.dispose();
-                if (marker.material) marker.material.dispose();
-            });
-        }
-        
-        function updateSeedColors(seedColors) {
-            // Update existing seed markers with their segment colors
-            scene.traverse((child) => {
-                if (child.userData && child.userData.isSeedMarker) {
-                    const seedIndex = child.userData.seedIndex;
-                    if (seedIndex < seedColors.length) {
-                        const color = seedColors[seedIndex];
-                        child.material.color.setRGB(color[0], color[1], color[2]);
-                        // Add some emissive color for better visibility
-                        child.material.emissive.setRGB(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2);
-                        // Make the seeds slightly larger and more visible
-                        child.scale.setScalar(1.3);
-                        child.material.opacity = 0.95;
-                        updateDebugInfo(`Updated seed ${seedIndex} to color [${color[0].toFixed(2)}, ${color[1].toFixed(2)}, ${color[2].toFixed(2)}]`);
-                    }
-                }
-            });
-        }
-        
-        function clearSeeds() {
-            selectedSeeds = [];
-            updateSeedDisplay();
-            
-            // Remove visual markers
-            removeSeedMarkers();
-            
-            // Reset mesh colors if segmented
-            if (meshObject && meshObject.material.vertexColors) {
-                meshObject.material = new THREE.MeshLambertMaterial({
-                    color: 0x888888,
-                    wireframe: false,
-                    side: THREE.DoubleSide
-                });
-            }
-            
-            showStatus('All seeds cleared.', 'info');
-        }
-        
-        function updateSeedDisplay() {
-            const seedCount = document.getElementById('seedCount');
-            const segmentBtn = document.getElementById('segmentBtn');
-            const seedList = document.getElementById('seedList');
-            
-            seedCount.textContent = selectedSeeds.length;
-            
+            displayMesh(result);
+            showStatus(`🚀 Mesh loaded successfully! ${result.total_faces} faces ready for analysis.`, 'success');
+            clearSeeds();
             updateSegmentButtonState();
+        } else {
+            updateDebugInfo('Server error: ' + result.error);
+            showStatus(`Error loading mesh: ${result.error}`, 'error');
+        }
+    } catch (error) {
+        updateDebugInfo('Network error: ' + error.message);
+        showStatus(`Network error: ${error.message}`, 'error');
+    } finally {
+        showLoading(false);
+    }
+}
 
-            if (selectedSeeds.length === 0) {
-                seedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); font-style: italic;">No seeds selected</div>';
-                
-                // Group seeds by color for display
-                const seedsByColor = {};
-                selectedSeeds.forEach((seed, index) => {
-                    if (!seedsByColor[seed.color]) {
-                        seedsByColor[seed.color] = [];
-                    }
-                    seedsByColor[seed.color].push({ seed, index });
-                });
-                
-                let html = '';
-                Object.keys(seedsByColor).forEach(color => {
-                    const colorSeeds = seedsByColor[color];
-                    const colorRGB = seedColors[color];
-                    const colorStyle = `rgb(${Math.round(colorRGB[0] * 255)}, ${Math.round(colorRGB[1] * 255)}, ${Math.round(colorRGB[2] * 255)})`;
-                    
-                    html += `<div class="seed-item">
-                        <div class="seed-color-indicator" style="background-color: ${colorStyle};"></div>
-                        <div class="seed-info">
-                            <strong>${color.charAt(0).toUpperCase() + color.slice(1)}</strong>: ${colorSeeds.length} seed${colorSeeds.length > 1 ? 's' : ''}
-                        </div>
-                    </div>`;
-                });
-                
-                seedList.innerHTML = html;
+function displayMesh(data) {
+    try {
+        updateDebugInfo(`Displaying mesh: ${data.vertices.length} vertices, ${data.faces.length} faces`);
+        
+        // Clear existing scene first
+        clearAutoSeedMarkers(); 
+        clearScene();
+        
+        // Remove test cube
+        scene.traverse((child) => {
+            if (child.geometry && child.geometry.type === 'BoxGeometry') {
+                scene.remove(child);
             }
+        });
+        
+        // Validate input data
+        if (!data.vertices || !data.faces || data.vertices.length === 0 || data.faces.length === 0) {
+            updateDebugInfo('ERROR: Invalid or empty mesh data');
+            return;
         }
         
-        async function runSegmentation() {
-            showLoading(true);
-            
-            if (segmentationMode === 'manual') {
-                // Manual segmentation code (keep existing code)
-                if (selectedSeeds.length === 0) {
-                    showStatus('Please select at least one seed point by clicking on the mesh.', 'error');
-                    showLoading(false);
-                    return;
-                }
-                
-                showStatus('Processing mesh segmentation with colored seeds...', 'info');
-                
-                try {
-                    const seedData = selectedSeeds.map(seed => ({
-                        position: seed.position,
-                        color: seed.color
-                    }));
-                    
-                    const response = await fetch('/segment_with_colored_seeds', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            colored_seeds: seedData,
-                            output_dir: document.getElementById('outputDir').value
-                        })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        displaySegmentedMesh(result.face_colors);
-                        let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created`;
-                        if (result.combined_segments) {
-                            statusMessage += ` and combined into ${result.combined_segments} groups by color`;
-                        }
-                        statusMessage += '.';
-                        
-                        if (result.stats) {
-                            const stats = result.stats;
-                            statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
-                            updateDebugInfo(`Segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
-                        }
-                        
-                        showStatus(statusMessage, 'success');
-                        document.getElementById('downloadBtn').disabled = false;
-                    } else {
-                        showStatus(`Segmentation error: ${result.error}`, 'error');
-                    }
-                } catch (error) {
-                    showStatus(`Network error: ${error.message}`, 'error');
-                } finally {
-                    showLoading(false);
-                }
+        // Create geometry
+        const geometry = new THREE.BufferGeometry();
+        
+        // Convert vertices to flat array
+        const vertices = [];
+        for (let i = 0; i < data.vertices.length; i++) {
+            const vertex = data.vertices[i];
+            if (vertex && vertex.length >= 3) {
+                vertices.push(vertex[0], vertex[1], vertex[2]);
             } else {
-                // Automatic segmentation
-                const nSeeds = parseInt(document.getElementById('nSeeds').value);
-                
-                if (nSeeds < 2) {
-                    showStatus('Number of segments must be at least 2', 'error');
-                    showLoading(false);
-                    return;
-                }
-                
-                showStatus(`Running automatic segmentation with ${nSeeds} segments...`, 'info');
-                
-                try {
-                    const response = await fetch('/segment_automatic', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            n_seeds: nSeeds,
-                            output_dir: document.getElementById('outputDir').value
-                        })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        displaySegmentedMesh(result.face_colors);
-                        
-                        let statusMessage = `✨ Automatic segmentation complete! ${result.segments_created} segments created.`;
-                        
-                        if (result.stats) {
-                            const stats = result.stats;
-                            statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
-                            updateDebugInfo(`Automatic segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
-                        }
-                        
-                        showStatus(statusMessage, 'success');
-                        document.getElementById('downloadBtn').disabled = false;
-                    } else {
-                        showStatus(`Segmentation error: ${result.error}`, 'error');
-                    }
-                } catch (error) {
-                    showStatus(`Network error: ${error.message}`, 'error');
-                } finally {
-                    showLoading(false);
-                }
-            }
-        }
-        
-        function displaySegmentedMesh(faceColors) {
-            if (!meshObject || !meshData) {
-                updateDebugInfo('ERROR: No mesh object or data available for segmentation display');
+                updateDebugInfo(`ERROR: Invalid vertex at index ${i}: ${vertex}`);
                 return;
             }
-            
-            updateDebugInfo(`[FIXED] Displaying segmented mesh with ${faceColors.length} face colors using smart vertex color averaging`);
-            
-            try {
-                // Validate face colors array
-                if (faceColors.length !== meshData.faces.length) {
-                    updateDebugInfo(`WARNING: Face colors length (${faceColors.length}) != faces length (${meshData.faces.length})`);
+        }
+        
+        // Convert faces to indices array and validate
+        const indices = [];
+        let maxVertexIndex = data.vertices.length - 1;
+        
+        for (let i = 0; i < data.faces.length; i++) {
+            const face = data.faces[i];
+            if (face && face.length >= 3) {
+                // Validate face indices
+                if (face[0] <= maxVertexIndex && face[1] <= maxVertexIndex && face[2] <= maxVertexIndex &&
+                    face[0] >= 0 && face[1] >= 0 && face[2] >= 0) {
+                    indices.push(face[0], face[1], face[2]);
+                } else {
+                    updateDebugInfo(`ERROR: Invalid face indices at ${i}: [${face[0]}, ${face[1]}, ${face[2]}], max vertex: ${maxVertexIndex}`);
+                    return;
                 }
-                
-                // Keep the original indexed geometry but fix the color assignment
-                const geometry = meshObject.geometry.clone();
-                
-                // Track vertex colors with proper averaging
-                const positionAttribute = geometry.attributes.position;
-                const vertexCount = positionAttribute.count;
-                
-                // Map to track all face colors for each vertex
-                const vertexFaceColors = new Map();
-                
-                // Build mapping of vertices to all their face colors
-                for (let faceIdx = 0; faceIdx < meshData.faces.length; faceIdx++) {
-                    const face = meshData.faces[faceIdx];
-                    const faceColor = faceColors[faceIdx] || [0.4, 0.4, 0.4];
-                    
-                    for (let j = 0; j < 3; j++) {
-                        const vertexIdx = face[j];
-                        if (vertexIdx < vertexCount) {
-                            if (!vertexFaceColors.has(vertexIdx)) {
-                                vertexFaceColors.set(vertexIdx, []);
-                            }
-                            vertexFaceColors.get(vertexIdx).push(faceColor);
-                        }
-                    }
-                }
-                
-                // Create vertex colors by averaging all face colors for each vertex
-                const colors = [];
-                for (let i = 0; i < vertexCount; i++) {
-                    const faceColors = vertexFaceColors.get(i) || [[0.4, 0.4, 0.4]];
-                    
-                    // Average all face colors for this vertex
-                    let avgR = 0, avgG = 0, avgB = 0;
-                    for (const color of faceColors) {
-                        avgR += color[0];
-                        avgG += color[1];
-                        avgB += color[2];
-                    }
-                    const count = faceColors.length;
-                    
-                    colors.push(avgR / count, avgG / count, avgB / count);
-                }
-                
-                updateDebugInfo(`Created averaged vertex colors: ${colors.length/3} vertices colored`);
-                
-                // Set color attribute
-                const colorAttribute = new THREE.BufferAttribute(new Float32Array(colors), 3);
-                colorAttribute.needsUpdate = true;
-                geometry.setAttribute('color', colorAttribute);
-                
-                // Create new material with vertex colors
-                const material = new THREE.MeshLambertMaterial({
-                    vertexColors: true,
-                    side: THREE.DoubleSide
-                });
-                
-                // Update the existing mesh
-                if (meshObject.material) {
-                    if (meshObject.material.map) meshObject.material.map.dispose();
-                    meshObject.material.dispose();
-                }
-                if (meshObject.geometry !== geometry) {
-                    meshObject.geometry.dispose();
-                }
-                
-                meshObject.geometry = geometry;
-                meshObject.material = material;
-                
-                updateDebugInfo('Segmented mesh display updated successfully with averaged vertex colors');
-                
-                // Force render update
-                renderer.render(scene, camera);
-                
-            } catch (error) {
-                updateDebugInfo('Error in displaySegmentedMesh: ' + error.message);
-                console.error('Error in displaySegmentedMesh:', error);
+            } else {
+                updateDebugInfo(`ERROR: Invalid face at index ${i}: ${face}`);
+                return;
             }
         }
         
-        function downloadSegments() {
-            const outputDir = document.getElementById('outputDir').value;
-            window.open(`/download_segments?output_dir=${encodeURIComponent(outputDir)}`, '_blank');
+        updateDebugInfo(`Processed: ${vertices.length/3} vertices, ${indices.length/3} faces`);
+        
+        // Debug: Check data ranges
+        let minVert = [Infinity, Infinity, Infinity];
+        let maxVert = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < vertices.length; i += 3) {
+            minVert[0] = Math.min(minVert[0], vertices[i]);
+            minVert[1] = Math.min(minVert[1], vertices[i + 1]);
+            minVert[2] = Math.min(minVert[2], vertices[i + 2]);
+            maxVert[0] = Math.max(maxVert[0], vertices[i]);
+            maxVert[1] = Math.max(maxVert[1], vertices[i + 1]);
+            maxVert[2] = Math.max(maxVert[2], vertices[i + 2]);
         }
         
-        // Initialize the application
-        document.addEventListener('DOMContentLoaded', function() {
-            updateDebugInfo('DOM loaded, initializing...');
-
-            // Update n_seeds display when input changes
-            const nSeedsInput = document.getElementById('nSeeds');
-            const nSeedsDisplay = document.getElementById('nSeedsDisplay');
-
-            if (nSeedsInput) {
-                nSeedsInput.addEventListener('input', function() {
-                    if (nSeedsDisplay) {
-                        nSeedsDisplay.textContent = this.value;
-                    }
-                });
+        updateDebugInfo(`Mesh bounds: min(${minVert[0].toFixed(2)}, ${minVert[1].toFixed(2)}, ${minVert[2].toFixed(2)}) max(${maxVert[0].toFixed(2)}, ${maxVert[1].toFixed(2)}, ${maxVert[2].toFixed(2)})`);
+        
+        // Create buffer geometry with proper buffer management
+        const positionAttribute = new THREE.BufferAttribute(new Float32Array(vertices), 3);
+        positionAttribute.needsUpdate = true;
+        geometry.setAttribute('position', positionAttribute);
+        
+        // Only set indices if we have valid ones
+        if (indices.length > 0) {
+            // Convert to appropriate array type based on vertex count
+            let indexAttribute;
+            if (maxVertexIndex < 65536) {
+                indexAttribute = new THREE.BufferAttribute(new Uint16Array(indices), 1);
+            } else {
+                indexAttribute = new THREE.BufferAttribute(new Uint32Array(indices), 1);
             }
+            indexAttribute.needsUpdate = true;
+            geometry.setIndex(indexAttribute);
+            updateDebugInfo(`Set indices: ${indices.length} elements (${indexAttribute.array.constructor.name})`);
+        } else {
+            updateDebugInfo('ERROR: No valid indices created');
+            return;
+        }
+        
+        // Compute normals AFTER setting position and indices
+        try {
+            geometry.computeVertexNormals();
+            updateDebugInfo('Computed vertex normals');
+        } catch (normalError) {
+            updateDebugInfo(`Warning: Could not compute normals: ${normalError.message}`);
+        }
+        
+        // Get bounding box
+        geometry.computeBoundingBox();
+        if (!geometry.boundingBox) {
+            updateDebugInfo('ERROR: Could not compute bounding box');
+            return;
+        }
+        
+        const box = geometry.boundingBox;
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        
+        updateDebugInfo(`Bounding box: center(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}) size(${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)}) maxDim: ${maxDim.toFixed(2)}`);
+        
+        // Create material - start with solid, not wireframe to avoid Three.js wireframe bug
+        const material = new THREE.MeshLambertMaterial({
+            color: 0x888888,
+            side: THREE.DoubleSide
+        });
+        
+        // Create mesh
+        meshObject = new THREE.Mesh(geometry, material);
+        
+        // Reset position and scale
+        meshObject.position.set(0, 0, 0);
+        meshObject.scale.set(1, 1, 1);
+        
+        // Center the mesh
+        meshObject.position.copy(center).negate();
+        
+        // Scale the mesh to fit in a 4-unit cube
+        if (maxDim > 0) {
+            const scale = 4 / maxDim;
+            meshObject.scale.setScalar(scale);
+            updateDebugInfo(`Applied scale: ${scale.toFixed(4)}`);
+        } else {
+            updateDebugInfo('Warning: mesh has zero size!');
+        }
+        
+        // Add to scene
+        scene.add(meshObject);
+        updateDebugInfo('Mesh added to scene (solid mode)');
+        
+        // Position camera to see the mesh better
+        camera.position.set(6, 6, 6);
+        camera.lookAt(0, 0, 0);
+        controls.target.set(0, 0, 0);
+        controls.update();
+        
+        updateDebugInfo('Camera positioned - mesh should be visible');
+
+        // Display valley faces if available
+        if (data.valley_faces && data.valley_scores) {
+            valleyFaces = data.valley_faces;
+            valleyScores = data.valley_scores;
+            displayValleyFaces();
+        }
+        
+        // Force a safe render
+        try {
+            renderer.render(scene, camera);
+            updateDebugInfo('Initial render successful');
+        } catch (renderError) {
+            updateDebugInfo('Initial render failed: ' + renderError.message);
+        }
+        
+    } catch (error) {
+        updateDebugInfo('Error displaying mesh: ' + error.message);
+        showStatus('Error displaying mesh: ' + error.message, 'error');
+        console.error('Full error:', error);
+    }
+}
+
+
+function displayValleyFaces() {
+    if (!meshObject || !valleyFaces || !valleyScores) {
+        updateDebugInfo('No valley data available');
+        return;
+    }
+    
+    updateDebugInfo(`Displaying valley faces: ${valleyFaces.filter(v => v).length} valley faces found`);
+    
+    // Create vertex colors based on valley faces
+    const geometry = meshObject.geometry;
+    const positionAttribute = geometry.attributes.position;
+    const vertexCount = positionAttribute.count;
+    
+    // Initialize colors array
+    const colors = new Float32Array(vertexCount * 3);
+    
+    // Default color (gray)
+    for (let i = 0; i < vertexCount * 3; i += 3) {
+        colors[i] = 0.7;     // R
+        colors[i + 1] = 0.7; // G
+        colors[i + 2] = 0.7; // B
+    }
+    
+    // Color valley faces based on their scores
+    for (let faceIdx = 0; faceIdx < meshData.faces.length; faceIdx++) {
+        if (valleyFaces[faceIdx]) {
+            const face = meshData.faces[faceIdx];
+            const score = valleyScores[faceIdx];
             
-            // Wait a bit for Three.js to load
+            // Color intensity based on score (red gradient)
+            const intensity = Math.min(score, 1.0);
+            const color = [
+                0.3 + intensity * 0.7,  // R (0.3 to 1.0)
+                0.1 * (1 - intensity),  // G (0.1 to 0)
+                0.1 * (1 - intensity)   // B (0.1 to 0)
+            ];
+            
+            // Apply color to all three vertices of the face
+            for (let j = 0; j < 3; j++) {
+                const vertexIdx = face[j];
+                if (vertexIdx < vertexCount) {
+                    colors[vertexIdx * 3] = color[0];
+                    colors[vertexIdx * 3 + 1] = color[1];
+                    colors[vertexIdx * 3 + 2] = color[2];
+                }
+            }
+        }
+    }
+    
+    // Set color attribute
+    const colorAttribute = new THREE.BufferAttribute(colors, 3);
+    geometry.setAttribute('color', colorAttribute);
+    
+    // Update material to use vertex colors
+    meshObject.material = new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide
+    });
+    
+    updateDebugInfo('Valley faces colored successfully');
+}
+
+
+function toggleWireframe() {
+    if (meshObject && meshObject.material) {
+        const isWireframe = meshObject.material.wireframe;
+        
+        if (isWireframe) {
+            // Switch to solid
+            meshObject.material = new THREE.MeshLambertMaterial({
+                color: 0x888888,
+                side: THREE.DoubleSide
+            });
+            updateDebugInfo('Switched to solid mode');
+        } else {
+            // Switch to wireframe - create a new wireframe material
+            meshObject.material = new THREE.MeshBasicMaterial({
+                color: 0x00ff00,
+                wireframe: true,
+                side: THREE.DoubleSide
+            });
+            updateDebugInfo('Switched to wireframe mode');
+        }
+    } else {
+        updateDebugInfo('No mesh object to toggle');
+    }
+}
+
+function addSeed(x, y, z) {
+    const seedData = {
+        position: [x, y, z],
+        color: currentSeedColor,
+        colorRGB: seedColors[currentSeedColor]
+    };
+    selectedSeeds.push(seedData);
+    updateSeedDisplay();
+
+    // compute marker radius: use MANUAL_SEED_RADIUS if set, otherwise derive from mesh size
+    let radius = MANUAL_SEED_RADIUS;
+    if (radius == null && meshObject) {
+        const bbox = new THREE.Box3().setFromObject(meshObject);
+        const diag = bbox.min.distanceTo(bbox.max);
+        radius = Math.max(SEED_MARKER_SCALE * diag, SEED_MARKER_MIN);
+    }
+    // fallback absolute radius if still null
+    if (radius == null) radius = 0.03;
+
+    // Use unit sphere and scale to radius -> consistent behaviour
+    const geometry = new THREE.SphereGeometry(1, 16, 16);
+    const colorRGB = seedColors[currentSeedColor];
+    const material = new THREE.MeshLambertMaterial({ 
+        color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
+        opacity: 0.9,
+        transparent: true,
+        emissive: new THREE.Color(colorRGB[0] * 0.2, colorRGB[1] * 0.2, colorRGB[2] * 0.2),
+        emissiveIntensity: 0.3
+    });
+    const marker = new THREE.Mesh(geometry, material);
+    marker.scale.setScalar(radius);
+    marker.position.set(x, y, z);
+    marker.userData = { 
+        isSeedMarker: true, 
+        seedIndex: selectedSeeds.length - 1,
+        seedColor: currentSeedColor,
+        autoSeed: false
+    };
+    scene.add(marker);
+    
+    showStatus(`${currentSeedColor.charAt(0).toUpperCase() + currentSeedColor.slice(1)} seed ${selectedSeeds.length} added at (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`, 'success');
+}
+
+function toggleSeedMarkers() {
+    // Check if there are any seed markers visible
+    let markersVisible = false;
+    scene.traverse((child) => {
+        if (child.userData && child.userData.isSeedMarker) {
+            markersVisible = child.visible;
+            return; // Exit early since we found one
+        }
+    });
+    
+    // Toggle visibility of all seed markers
+    scene.traverse((child) => {
+        if (child.userData && child.userData.isSeedMarker) {
+            child.visible = !markersVisible;
+        }
+    });
+    
+    const status = markersVisible ? 'hidden' : 'shown';
+    showStatus(`Seed markers ${status}`, 'info');
+}
+
+function removeSeedMarkers() {
+    // Remove visual markers (both manual and auto) by testing userData.isSeedMarker
+    const markersToRemove = [];
+    scene.traverse((child) => {
+        if (child.userData && child.userData.isSeedMarker) {
+            markersToRemove.push(child);
+        }
+    });
+    markersToRemove.forEach(marker => {
+        if (marker.parent) marker.parent.remove(marker);
+        if (marker.geometry) marker.geometry.dispose();
+        if (marker.material) marker.material.dispose();
+    });
+}
+
+function updateSeedColors(seedColors) {
+    // Update existing seed markers with their segment colors
+    scene.traverse((child) => {
+        if (child.userData && child.userData.isSeedMarker) {
+            const seedIndex = child.userData.seedIndex;
+            if (seedIndex < seedColors.length) {
+                const color = seedColors[seedIndex];
+                child.material.color.setRGB(color[0], color[1], color[2]);
+                // Add some emissive color for better visibility
+                child.material.emissive.setRGB(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2);
+                // Make the seeds slightly larger and more visible
+                child.scale.setScalar(1.3);
+                child.material.opacity = 0.95;
+                updateDebugInfo(`Updated seed ${seedIndex} to color [${color[0].toFixed(2)}, ${color[1].toFixed(2)}, ${color[2].toFixed(2)}]`);
+            }
+        }
+    });
+}
+
+function clearAutoSeedMarkers() {
+    if (!autoSeedMarkersGroup) return;
+    // remove from its parent (meshObject), not scene (handles both cases)
+    if (autoSeedMarkersGroup.parent) {
+        autoSeedMarkersGroup.parent.remove(autoSeedMarkersGroup);
+    } else {
+        scene.remove(autoSeedMarkersGroup);
+    }
+    autoSeedMarkersGroup.traverse(obj => {
+        if (obj.isMesh) {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                else obj.material.dispose();
+            }
+        }
+    });
+    autoSeedMarkersGroup = null;
+}
+
+function clearSeeds() {
+    selectedSeeds = [];
+    updateSeedDisplay();
+    removeSeedMarkers();
+    clearAutoSeedMarkers();
+    
+    // Remove visual markers
+    removeSeedMarkers();
+    
+    // Reset mesh colors if segmented (but keep valley colors if they exist)
+    if (meshObject && meshObject.material.vertexColors) {
+        if (valleyFaces && valleyScores) {
+            displayValleyFaces(); // Re-display valley faces
+        } else {
+            meshObject.material = new THREE.MeshLambertMaterial({
+                color: 0x888888,
+                wireframe: false,
+                side: THREE.DoubleSide
+            });
+        }
+    }
+    
+    showStatus('All seeds cleared.', 'info');
+}
+
+function updateSeedDisplay() {
+    const seedCount = document.getElementById('seedCount');
+    const segmentBtn = document.getElementById('segmentBtn');
+    const seedList = document.getElementById('seedList');
+    
+    seedCount.textContent = selectedSeeds.length;
+    
+    updateSegmentButtonState();
+
+    if (selectedSeeds.length === 0) {
+        seedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); font-style: italic;">No seeds selected</div>';
+        
+        // Group seeds by color for display
+        const seedsByColor = {};
+        selectedSeeds.forEach((seed, index) => {
+            if (!seedsByColor[seed.color]) {
+                seedsByColor[seed.color] = [];
+            }
+            seedsByColor[seed.color].push({ seed, index });
+        });
+        
+        let html = '';
+        Object.keys(seedsByColor).forEach(color => {
+            const colorSeeds = seedsByColor[color];
+            const colorRGB = seedColors[color];
+            const colorStyle = `rgb(${Math.round(colorRGB[0] * 255)}, ${Math.round(colorRGB[1] * 255)}, ${Math.round(colorRGB[2] * 255)})`;
+            
+            html += `<div class="seed-item">
+                <div class="seed-color-indicator" style="background-color: ${colorStyle};"></div>
+                <div class="seed-info">
+                    <strong>${color.charAt(0).toUpperCase() + color.slice(1)}</strong>: ${colorSeeds.length} seed${colorSeeds.length > 1 ? 's' : ''}
+                </div>
+            </div>`;
+        });
+        
+        seedList.innerHTML = html;
+    }
+}
+
+function showSeedMarkersFromFaces(faceIndices, colors) {
+    clearAutoSeedMarkers();
+    if (!meshData || !meshObject) return;
+    if (!faceIndices || faceIndices.length === 0) return;
+    
+    autoSeedMarkersGroup = new THREE.Group();
+    
+    // Use the same radius as manual seeds
+    const markerRadius = MANUAL_SEED_RADIUS;
+    const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
+    
+    for (let i = 0; i < faceIndices.length; ++i) {
+        const fi = faceIndices[i];
+        if (fi == null || !meshData.faces[fi]) continue;
+        
+        const [a, b, c] = meshData.faces[fi];
+        const v0 = meshData.vertices[a];
+        const v1 = meshData.vertices[b];
+        const v2 = meshData.vertices[c];
+        
+        // Calculate face centroid in local space
+        const cx = (v0[0] + v1[0] + v2[0]) / 3;
+        const cy = (v0[1] + v1[1] + v2[1]) / 3;
+        const cz = (v0[2] + v1[2] + v2[2]) / 3;
+        
+        const color = (colors && colors[i]) ? colors[i] : [1, 0, 0];
+        const mat = new THREE.MeshLambertMaterial({
+            color: new THREE.Color(color[0], color[1], color[2]),
+            emissive: new THREE.Color(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2),
+            transparent: true,
+            opacity: 0.95,
+            depthTest: true
+        });
+        
+        const m = new THREE.Mesh(sphereGeo, mat);
+        m.scale.setScalar(markerRadius);
+        // Keep position in local space - no transformation needed
+        m.position.set(cx, cy, cz);
+        m.userData = { isSeedMarker: true, autoSeed: true, seedIndex: i };
+        
+        autoSeedMarkersGroup.add(m);
+    }
+    
+    // Add as child of meshObject so markers follow mesh transformations
+    meshObject.add(autoSeedMarkersGroup);
+}
+
+function showSeedMarkersFromPositions(positions, colors, coords = 'local') {
+    clearAutoSeedMarkers();
+    if (!meshData || !meshObject) return;
+    if (!positions || positions.length === 0) return;
+
+    autoSeedMarkersGroup = new THREE.Group();
+
+    const bbox = new THREE.Box3().setFromObject(meshObject);
+    const diag = bbox.min.distanceTo(bbox.max);
+    const markerRadius = Math.max(SEED_MARKER_SCALE * diag, SEED_MARKER_MIN);
+
+    const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
+
+    for (let i = 0; i < positions.length; ++i) {
+        const p = positions[i];
+        if (!p || p.length < 3) continue;
+
+        // ggf. in World Space umrechnen
+        let worldPos = new THREE.Vector3(p[0], p[1], p[2]);
+        if (coords === 'local') {
+        worldPos = worldPos.clone();
+        meshObject.localToWorld(worldPos);
+        }
+
+        const color = (colors && colors[i]) ? colors[i] : [1, 0, 0];
+        const mat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        emissive: new THREE.Color(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2),
+        transparent: true,
+        opacity: 0.95,
+        depthTest: true
+        });
+
+        const m = new THREE.Mesh(sphereGeo, mat);
+        m.scale.setScalar(markerRadius);
+        m.position.copy(worldPos);
+        m.userData = { isSeedMarker: true, autoSeed: true, seedIndex: i };
+
+        autoSeedMarkersGroup.add(m);
+    }
+
+    // World-Space Parenting (kein Doppel-Scaling)
+    scene.add(autoSeedMarkersGroup);
+}
+
+
+function showSeedMarkersFromPositions(positions, colors) {
+    clearAutoSeedMarkers();
+    if (!meshData || !meshObject) return;
+    if (!positions || positions.length === 0) return;
+
+    autoSeedMarkersGroup = new THREE.Group();
+
+    // compute marker radius relative to model size
+    const bbox = new THREE.Box3().setFromObject(meshObject);
+    const diag = bbox.min.distanceTo(bbox.max);
+    const markerRadius = Math.max(SEED_MARKER_SCALE * diag, SEED_MARKER_MIN);
+
+    const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
+
+    for (let i = 0; i < positions.length; ++i) {
+        const p = positions[i];
+        if (!p || p.length < 3) continue;
+
+        const color = (colors && colors[i]) ? colors[i] : [1, 0, 0];
+        const mat = new THREE.MeshLambertMaterial({
+            color: new THREE.Color(color[0], color[1], color[2]),
+            emissive: new THREE.Color(color[0] * 0.2, color[1] * 0.2, color[2] * 0.2),
+            transparent: true,
+            opacity: 0.95,
+            depthTest: true
+        });
+
+        const m = new THREE.Mesh(sphereGeo, mat);
+        m.scale.setScalar(markerRadius);
+        m.position.set(p[0], p[1], p[2]);
+
+        m.userData = { isSeedMarker: true, autoSeed: true, seedIndex: i };
+
+        autoSeedMarkersGroup.add(m);
+    }
+
+    // Attach markers as child of meshObject so they follow the same transforms
+    scene.add(autoSeedMarkersGroup);
+}
+
+async function runSegmentation() {
+    showLoading(true);
+    
+    if (segmentationMode === 'manual') {
+        // Manual segmentation code (keep existing code)
+        if (selectedSeeds.length === 0) {
+            showStatus('Please select at least one seed point by clicking on the mesh.', 'error');
+            showLoading(false);
+            return;
+        }
+        
+        showStatus('Processing mesh segmentation with colored seeds...', 'info');
+        
+        try {
+            const seedData = selectedSeeds.map(seed => ({
+                position: seed.position,
+                color: seed.color
+            }));
+            
+            const response = await fetch('/segment_with_colored_seeds', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    colored_seeds: seedData,
+                    output_dir: document.getElementById('outputDir').value
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                displaySegmentedMesh(result.face_colors);
+
+                // show markers: support multiple backend keys (seed_face_indices, seed_positions, clicked_points)
+                if (result.seed_face_indices && Array.isArray(result.seed_face_indices)) {
+                    showSeedMarkersFromFaces(result.seed_face_indices, result.seed_colors || []);
+                } else if (result.seed_positions && Array.isArray(result.seed_positions)) {
+                    showSeedMarkersFromPositions(result.seed_positions, result.seed_colors || []);
+                } else if (result.clicked_points && Array.isArray(result.clicked_points)) {
+                    // clicked_points are already in display coordinates — use them directly
+                    showSeedMarkersFromPositions(result.clicked_points, result.seed_colors || []);
+                }
+
+                let statusMessage = `✨ Segmentation complete! ${result.segments_created} segments created`;
+                if (result.combined_segments) {
+                    statusMessage += ` and combined into ${result.combined_segments} groups by color`;
+                }
+                statusMessage += '.';
+                
+                if (result.stats) {
+                    const stats = result.stats;
+                    statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
+                    updateDebugInfo(`Segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
+                }
+                
+                showStatus(statusMessage, 'success');
+                document.getElementById('downloadBtn').disabled = false;
+            } else {
+                showStatus(`Segmentation error: ${result.error}`, 'error');
+            }
+        } catch (error) {
+            showStatus(`Network error: ${error.message}`, 'error');
+        } finally {
+            showLoading(false);
+        }
+    } else {
+        // Automatic segmentation
+        const nSeeds = parseInt(document.getElementById('nSeeds').value);
+        
+        if (nSeeds < 2) {
+            showStatus('Number of segments must be at least 2', 'error');
+            showLoading(false);
+            return;
+        }
+        
+        showStatus(`Running automatic segmentation with ${nSeeds} segments...`, 'info');
+        
+        try {
+            const response = await fetch('/segment_automatic', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    n_seeds: nSeeds,
+                    output_dir: document.getElementById('outputDir').value
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                displaySegmentedMesh(result.face_colors);
+
+                if (result.seed_face_indices && Array.isArray(result.seed_face_indices)) {
+                    showSeedMarkersFromFaces(result.seed_face_indices, result.seed_colors || []);
+                } else if (result.seed_positions && Array.isArray(result.seed_positions)) {
+                    showSeedMarkersFromPositions(result.seed_positions, result.seed_colors || []);
+                }
+                
+                let statusMessage = `✨ Automatic segmentation complete! ${result.segments_created} segments created.`;
+                
+                if (result.stats) {
+                    const stats = result.stats;
+                    statusMessage += ` (${stats.segmented_faces}/${stats.total_faces} faces segmented, ${((stats.segmented_faces/stats.total_faces)*100).toFixed(1)}%)`;
+                    updateDebugInfo(`Automatic segmentation stats: ${stats.segmented_faces}/${stats.total_faces} faces segmented`);
+                }
+                
+                showStatus(statusMessage, 'success');
+                document.getElementById('downloadBtn').disabled = false;
+            } else {
+                showStatus(`Segmentation error: ${result.error}`, 'error');
+            }
+        } catch (error) {
+            showStatus(`Network error: ${error.message}`, 'error');
+        } finally {
+            showLoading(false);
+        }
+    }
+}
+
+function displaySegmentedMesh(faceColors) {
+    if (!meshObject || !meshData) {
+        updateDebugInfo('ERROR: No mesh object or data available for segmentation display');
+        return;
+    }
+    
+    updateDebugInfo(`[FIXED] Displaying segmented mesh with ${faceColors.length} face colors using smart vertex color averaging`);
+    
+    try {
+        // Validate face colors array
+        if (faceColors.length !== meshData.faces.length) {
+            updateDebugInfo(`WARNING: Face colors length (${faceColors.length}) != faces length (${meshData.faces.length})`);
+        }
+        
+        // Keep the original indexed geometry but fix the color assignment
+        const geometry = meshObject.geometry.clone();
+        
+        // Track vertex colors with proper averaging
+        const positionAttribute = geometry.attributes.position;
+        const vertexCount = positionAttribute.count;
+        
+        // Map to track all face colors for each vertex
+        const vertexFaceColors = new Map();
+        
+        // Build mapping of vertices to all their face colors
+        for (let faceIdx = 0; faceIdx < meshData.faces.length; faceIdx++) {
+            const face = meshData.faces[faceIdx];
+            const faceColor = faceColors[faceIdx] || [0.4, 0.4, 0.4];
+            
+            for (let j = 0; j < 3; j++) {
+                const vertexIdx = face[j];
+                if (vertexIdx < vertexCount) {
+                    if (!vertexFaceColors.has(vertexIdx)) {
+                        vertexFaceColors.set(vertexIdx, []);
+                    }
+                    vertexFaceColors.get(vertexIdx).push(faceColor);
+                }
+            }
+        }
+        
+        // Create vertex colors by averaging all face colors for each vertex
+        const colors = [];
+        for (let i = 0; i < vertexCount; i++) {
+            const faceColors = vertexFaceColors.get(i) || [[0.4, 0.4, 0.4]];
+            
+            // Average all face colors for this vertex
+            let avgR = 0, avgG = 0, avgB = 0;
+            for (const color of faceColors) {
+                avgR += color[0];
+                avgG += color[1];
+                avgB += color[2];
+            }
+            const count = faceColors.length;
+            
+            colors.push(avgR / count, avgG / count, avgB / count);
+        }
+        
+        updateDebugInfo(`Created averaged vertex colors: ${colors.length/3} vertices colored`);
+        
+        // Set color attribute
+        const colorAttribute = new THREE.BufferAttribute(new Float32Array(colors), 3);
+        colorAttribute.needsUpdate = true;
+        geometry.setAttribute('color', colorAttribute);
+        
+        // Create new material with vertex colors
+        const material = new THREE.MeshLambertMaterial({
+            vertexColors: true,
+            side: THREE.DoubleSide
+        });
+        
+        // Update the existing mesh
+        if (meshObject.material) {
+            if (meshObject.material.map) meshObject.material.map.dispose();
+            meshObject.material.dispose();
+        }
+        if (meshObject.geometry !== geometry) {
+            meshObject.geometry.dispose();
+        }
+        
+        meshObject.geometry = geometry;
+        meshObject.material = material;
+        
+        updateDebugInfo('Segmented mesh display updated successfully with averaged vertex colors');
+        
+        // Force render update
+        renderer.render(scene, camera);
+        
+    } catch (error) {
+        updateDebugInfo('Error in displaySegmentedMesh: ' + error.message);
+        console.error('Error in displaySegmentedMesh:', error);
+    }
+}
+
+function downloadSegments() {
+    const outputDir = document.getElementById('outputDir').value;
+    window.open(`/download_segments?output_dir=${encodeURIComponent(outputDir)}`, '_blank');
+}
+
+// Initialize the application
+document.addEventListener('DOMContentLoaded', function() {
+    updateDebugInfo('DOM loaded, initializing...');
+
+    // Update n_seeds display when input changes
+    const nSeedsInput = document.getElementById('nSeeds');
+    const nSeedsDisplay = document.getElementById('nSeedsDisplay');
+
+    if (nSeedsInput) {
+        nSeedsInput.addEventListener('input', function() {
+            if (nSeedsDisplay) {
+                nSeedsDisplay.textContent = this.value;
+            }
+        });
+    }
+    
+    // Wait a bit for Three.js to load
+    setTimeout(() => {
+        if (typeof THREE !== 'undefined') {
+            updateDebugInfo('Three.js available, version: ' + THREE.REVISION);
+            initThreeJS();
+            
+            // Auto-load the example mesh after Three.js is initialized
+            setTimeout(() => {
+                updateDebugInfo('Auto-loading example mesh...');
+                loadMesh();
+            }, 500);
+        } else {
+            updateDebugInfo('Three.js not loaded, retrying...');
             setTimeout(() => {
                 if (typeof THREE !== 'undefined') {
-                    updateDebugInfo('Three.js available, version: ' + THREE.REVISION);
                     initThreeJS();
-                    
-                    // Auto-load the example mesh after Three.js is initialized
+                    // Auto-load after retry
                     setTimeout(() => {
                         updateDebugInfo('Auto-loading example mesh...');
                         loadMesh();
                     }, 500);
                 } else {
-                    updateDebugInfo('Three.js not loaded, retrying...');
-                    setTimeout(() => {
-                        if (typeof THREE !== 'undefined') {
-                            initThreeJS();
-                            // Auto-load after retry
-                            setTimeout(() => {
-                                updateDebugInfo('Auto-loading example mesh...');
-                                loadMesh();
-                            }, 500);
-                        } else {
-                            updateDebugInfo('Failed to load Three.js');
-                        }
-                    }, 1000);
+                    updateDebugInfo('Failed to load Three.js');
                 }
-            }, 100);
-        });
+            }, 1000);
+        }
+    }, 100);
+});
