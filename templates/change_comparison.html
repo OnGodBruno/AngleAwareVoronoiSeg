@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Change Comparison - AAVS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #8b5cf6;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --bg-primary: #0f0f23;
+            --bg-secondary: #1a1a2e;
+            --bg-tertiary: #16213e;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #64748b;
+            --border-color: #334155;
+            --border-hover: #475569;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --shadow-primary: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            overflow: hidden;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+
+        #controls {
+            width: 350px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid var(--glass-border);
+            overflow-y: auto;
+            padding: 24px;
+            box-shadow: var(--shadow-glass);
+            z-index: 10;
+        }
+
+        #viewer {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(ellipse at center, rgba(99, 102, 241, 0.1) 0%, var(--bg-primary) 70%);
+            display: flex;
+        }
+
+        .viewer-panel {
+            flex: 1;
+            position: relative;
+            border-right: 1px solid var(--glass-border);
+        }
+
+        .viewer-panel:last-child {
+            border-right: none;
+        }
+
+        .viewer-panel .panel-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 100;
+        }
+
+        .viewer-panel .panel-label.original {
+            background: rgba(239, 68, 68, 0.9);
+            color: white;
+        }
+
+        .viewer-panel .panel-label.experimental {
+            background: rgba(59, 130, 246, 0.9);
+            color: white;
+        }
+
+        .header {
+            margin-bottom: 32px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .header .subtitle {
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 400;
+        }
+
+        .control-section {
+            margin-bottom: 28px;
+            padding: 20px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .control-section:hover {
+            border-color: var(--border-hover);
+        }
+
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-title i {
+            color: var(--primary-color);
+        }
+
+        .btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-bottom: 8px;
+        }
+
+        .btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            background: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn.btn-success {
+            background: var(--success-color);
+        }
+
+        .btn.btn-success:hover {
+            background: #059669;
+        }
+
+        .btn.btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+
+        .btn.btn-secondary:hover {
+            background: var(--border-color);
+        }
+
+        .mesh-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .mesh-item {
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 2px solid transparent;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .mesh-item:hover {
+            background: var(--border-color);
+        }
+
+        .mesh-item.selected {
+            border-color: var(--primary-color);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .mesh-item.configured {
+            border-color: var(--success-color);
+        }
+
+        .mesh-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .mesh-name {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .mesh-status {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .mesh-badge {
+            background: var(--success-color);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .mesh-badge.pending {
+            background: var(--warning-color);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: var(--text-muted);
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .status-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            transform: translateY(-100px);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .status-indicator.show {
+            transform: translateY(0);
+        }
+
+        .status-indicator.success {
+            background: var(--success-color);
+        }
+
+        .status-indicator.error {
+            background: var(--error-color);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+            font-size: 13px;
+        }
+
+        .nav-link:hover {
+            background: var(--glass-bg);
+            color: var(--text-primary);
+        }
+
+        .nav-link.active {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .comparison-info {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .comparison-info h3 {
+            color: var(--text-primary);
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .comparison-info p {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin: 4px 0;
+        }
+
+        .legend {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+
+        .toggle-container {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--glass-border);
+        }
+
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-secondary);
+            user-select: none;
+        }
+
+        .toggle-label input {
+            display: none;
+        }
+
+        .toggle-slider {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            border: 2px solid var(--border-color);
+        }
+
+        .toggle-slider:before {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            background: var(--text-muted);
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-label input:checked + .toggle-slider {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        .toggle-label input:checked + .toggle-slider:before {
+            background: white;
+            transform: translateX(20px);
+        }
+
+        .toggle-label:hover .toggle-slider {
+            border-color: var(--border-hover);
+        }
+
+        .toggle-label input:checked:hover + .toggle-slider {
+            background: var(--primary-dark);
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <div class="header">
+                <h1>Change Comparison</h1>
+                <p class="subtitle">Compare segmentation algorithms</p>
+            </div>
+
+            <div class="nav-links">
+                <a href="/calibration" class="nav-link">Calibration</a>
+                <a href="/viewer" class="nav-link">Viewer</a>
+                <a href="/new_change_comparison" class="nav-link active">Comparison</a>
+            </div>
+
+            <div class="control-section">
+                <div class="section-title">
+                    <i class="fas fa-cubes"></i>
+                    Select Mesh
+                </div>
+                <div class="loading" id="meshesLoading">Loading meshes...</div>
+                <div class="mesh-list" id="meshList"></div>
+            </div>
+
+            <div class="comparison-info" id="comparisonInfo" style="display: none;">
+                <h3>Comparison Results</h3>
+                <p id="meshInfo">No mesh selected</p>
+                <p id="segmentInfo">Segments: 0</p>
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ff3333;"></div>
+                        <span>Original</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #3366ff;"></div>
+                        <span>Experimental</span>
+                    </div>
+                </div>
+                <div class="toggle-container">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="showSeedsToggle" checked>
+                        <span class="toggle-slider"></span>
+                        Show Seed Points
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div id="viewer">
+            <div class="viewer-panel" id="originalPanel">
+                <div class="panel-label original">Original Algorithm</div>
+            </div>
+            <div class="viewer-panel" id="experimentalPanel">
+                <div class="panel-label experimental">Experimental Algorithm</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-indicator" id="statusIndicator"></div>
+
+    <script>
+        let meshes = [];
+        let selectedMesh = null;
+        let originalScene, originalCamera, originalRenderer, originalControls;
+        let experimentalScene, experimentalCamera, experimentalRenderer, experimentalControls;
+        let meshData = null;
+        let originalSegmentation = null;
+        let experimentalSegmentation = null;
+        let showSeeds = true; // Toggle state for seed points
+        let seedMeshes = { original: [], experimental: [] }; // Store seed point meshes
+
+        // Color mapping for seed colors to segment colors (matching viewer)
+        const seedColorMap = {
+            'red': 0xff3333,
+            'green': 0x33ff33,
+            'blue': 0x3366ff,
+            'yellow': 0xffff33,
+            'magenta': 0xff33ff,
+            'cyan': 0x33ffff,
+            'orange': 0xff9933,
+            'purple': 0x9933ff,
+            'lime': 0x99ff33,
+            'pink': 0xff66cc,
+            'teal': 0x33cccc,
+            'brown': 0xcc6633
+        };
+
+        async function init() {
+            // Initialize original panel
+            initPanel('originalPanel', 'original');
+            // Initialize experimental panel
+            initPanel('experimentalPanel', 'experimental');
+
+            // Load meshes
+            await loadMeshList();
+
+            animate();
+        }
+
+        function initPanel(panelId, type) {
+            const panel = document.getElementById(panelId);
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f0f23);
+
+            const camera = new THREE.PerspectiveCamera(75, panel.clientWidth / panel.clientHeight, 0.1, 1000);
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(panel.clientWidth, panel.clientHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+            panel.appendChild(renderer.domElement);
+
+            // Controls
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 10, 10);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            camera.position.set(5, 5, 5);
+            controls.target.set(0, 0, 0);
+
+            // Store references
+            if (type === 'original') {
+                originalScene = scene;
+                originalCamera = camera;
+                originalRenderer = renderer;
+                originalControls = controls;
+            } else {
+                experimentalScene = scene;
+                experimentalCamera = camera;
+                experimentalRenderer = renderer;
+                experimentalControls = controls;
+            }
+        }
+
+        async function loadMeshList() {
+            try {
+                document.getElementById('meshesLoading').classList.add('show');
+
+                const response = await fetch('/api/meshes');
+                const data = await response.json();
+
+                if (data.success) {
+                    meshes = data.meshes.filter(mesh => mesh.configured); // Only show configured meshes
+                    renderMeshList();
+                } else {
+                    showStatus('Error loading meshes: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            } finally {
+                document.getElementById('meshesLoading').classList.remove('show');
+            }
+        }
+
+        function renderMeshList() {
+            const meshList = document.getElementById('meshList');
+            meshList.innerHTML = '';
+
+            meshes.forEach(mesh => {
+                const item = document.createElement('div');
+                item.className = 'mesh-item configured';
+                if (selectedMesh && selectedMesh.filename === mesh.filename) {
+                    item.classList.add('selected');
+                }
+
+                item.innerHTML = `
+                    <div class="mesh-info">
+                        <div class="mesh-name">${mesh.filename}</div>
+                        <div class="mesh-status">${mesh.seed_count} segments</div>
+                    </div>
+                    <div class="mesh-badge">Ready</div>
+                `;
+
+                item.onclick = () => selectMesh(mesh);
+                meshList.appendChild(item);
+            });
+        }
+
+        async function selectMesh(mesh) {
+            selectedMesh = mesh;
+            renderMeshList();
+
+            try {
+                showStatus('Loading comparison...', 'success');
+
+                const response = await fetch(`/api/compare_segmentation/${mesh.filename}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    meshData = data.mesh_data;
+                    originalSegmentation = data.original_segmentation;
+                    experimentalSegmentation = data.experimental_segmentation;
+
+                    // Update info panel
+                    document.getElementById('comparisonInfo').style.display = 'block';
+                    document.getElementById('meshInfo').textContent = `Mesh: ${mesh.filename}`;
+                    document.getElementById('segmentInfo').textContent = `Segments: ${originalSegmentation.n_segments}`;
+
+                    // Render both views
+                    renderSegmentation(originalScene, originalSegmentation);
+                    renderSegmentation(experimentalScene, experimentalSegmentation);
+
+                    showStatus('Comparison loaded successfully!', 'success');
+                } else {
+                    showStatus('Error loading comparison: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        function toggleSeeds() {
+            showSeeds = !showSeeds;
+            
+            // Update visibility for all seed meshes
+            ['original', 'experimental'].forEach(sceneType => {
+                seedMeshes[sceneType].forEach(seedMesh => {
+                    seedMesh.visible = showSeeds;
+                });
+            });
+        }
+
+        // Add toggle event listener
+        document.getElementById('showSeedsToggle').addEventListener('change', toggleSeeds);
+
+        function renderSegmentation(scene, segmentation) {
+            const isOriginal = scene === originalScene;
+            const sceneType = isOriginal ? 'original' : 'experimental';
+            
+            // Clear existing meshes
+            while (scene.children.length > 0) {
+                const child = scene.children[scene.children.length - 1];
+                if (child.type === 'Mesh' || child.type === 'Group') {
+                    scene.remove(child);
+                } else {
+                    break;
+                }
+            }
+
+            // Clear seed meshes array
+            seedMeshes[sceneType] = [];
+
+            if (!meshData || !segmentation) return;
+
+            // Create geometry
+            const geometry = new THREE.BufferGeometry();
+            const vertices = new Float32Array(meshData.vertices.flat());
+            const faces = meshData.faces.flat();
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            geometry.setIndex(faces);
+            geometry.computeVertexNormals();
+
+            // Create materials for each segment
+            const faceLabels = segmentation.face_labels;
+            const uniqueLabels = [...new Set(faceLabels)].sort();
+
+            uniqueLabels.forEach(label => {
+                const segmentFaces = [];
+                faceLabels.forEach((faceLabel, faceIndex) => {
+                    if (faceLabel === label) {
+                        segmentFaces.push(faceIndex);
+                    }
+                });
+
+                if (segmentFaces.length > 0) {
+                    const segmentGeometry = new THREE.BufferGeometry();
+                    const segmentVertices = [];
+                    const segmentIndices = [];
+
+                    segmentFaces.forEach(faceIndex => {
+                        const face = meshData.faces[faceIndex];
+                        const v1 = meshData.vertices[face[0]];
+                        const v2 = meshData.vertices[face[1]];
+                        const v3 = meshData.vertices[face[2]];
+
+                        const baseIndex = segmentVertices.length / 3;
+                        segmentVertices.push(...v1, ...v2, ...v3);
+                        segmentIndices.push(baseIndex, baseIndex + 1, baseIndex + 2);
+                    });
+
+                    segmentGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segmentVertices), 3));
+                    segmentGeometry.setIndex(segmentIndices);
+                    segmentGeometry.computeVertexNormals();
+
+                    // Find the seed index for this label (seed face)
+                    const seedIndex = segmentation.seed_faces.indexOf(label);
+                    const seedColorName = segmentation.seed_colors[seedIndex] || 'red';
+                    const segmentColor = seedColorMap[seedColorName] || 0xff4444;
+
+                    const material = new THREE.MeshLambertMaterial({
+                        color: segmentColor,
+                        transparent: true,
+                        opacity: 0.8
+                    });
+
+                    const mesh = new THREE.Mesh(segmentGeometry, material);
+                    scene.add(mesh);
+                }
+            });
+
+            // Add seed points
+            segmentation.seed_faces.forEach((seedFace, index) => {
+                const seedCenter = meshData.face_centers[seedFace];
+                const seedGeometry = new THREE.SphereGeometry(0.02, 8, 8);
+                const seedColorName = segmentation.seed_colors[index] || 'red';
+                const seedColor = seedColorMap[seedColorName] || 0xff4444;
+                const seedMaterial = new THREE.MeshBasicMaterial({
+                    color: seedColor
+                });
+                const seedMesh = new THREE.Mesh(seedGeometry, seedMaterial);
+                seedMesh.position.set(...seedCenter);
+                seedMesh.visible = showSeeds;
+                scene.add(seedMesh);
+                seedMeshes[sceneType].push(seedMesh);
+            });
+
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (originalControls) originalControls.update();
+            if (experimentalControls) experimentalControls.update();
+
+            if (originalRenderer) originalRenderer.render(originalScene, originalCamera);
+            if (experimentalRenderer) experimentalRenderer.render(experimentalScene, experimentalCamera);
+        }
+
+        function onWindowResize() {
+            const viewer = document.getElementById('viewer');
+            const panels = viewer.querySelectorAll('.viewer-panel');
+
+            panels.forEach(panel => {
+                const rect = panel.getBoundingClientRect();
+                const renderer = panel.querySelector('canvas') ? panel.querySelector('canvas')._renderer : null;
+                if (renderer) {
+                    const camera = panel === document.getElementById('originalPanel') ? originalCamera : experimentalCamera;
+                    camera.aspect = rect.width / rect.height;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(rect.width, rect.height);
+                }
+            });
+        }
+
+        function showStatus(message, type) {
+            const indicator = document.getElementById('statusIndicator');
+            indicator.textContent = message;
+            indicator.className = `status-indicator ${type}`;
+            indicator.classList.add('show');
+
+            setTimeout(() => {
+                indicator.classList.remove('show');
+            }, 3000);
+        }
+
+        window.addEventListener('resize', onWindowResize);
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>

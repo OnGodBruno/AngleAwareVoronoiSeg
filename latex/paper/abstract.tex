@@ -1,0 +1,6 @@
+% Abstract
+\begin{abstract}
+We present an angle-aware geodesic Voronoi segmentation algorithm for partitioning 3D triangle meshes into perceptually meaningful regions. Our method constructs a weighted dual graph over mesh faces, where edge weights combine spatial proximity with an exponential curvature penalty based on dihedral angles between adjacent faces. This formulation naturally preserves sharp features and respects geometric discontinuities during propagation. Given user-provided seed faces, segment assignment is computed via multi-source Dijkstra's algorithm, producing geodesic Voronoi cells that partition the mesh according to weighted shortest paths from each seed.
+
+The algorithm's key advantages include efficient sparse graph construction leveraging existing mesh topology and $\mathcal{O}(k \cdot n \log n)$ segmentation complexity for $k$ seeds on $n$-face meshes. Unlike spectral or graph-cut methods requiring eigendecomposition or global energy minimization, our approach provides deterministic, reproducible results with intuitive parameter control. We demonstrate the algorithm's effectiveness on diverse mesh geometries, achieving clean segment boundaries aligned with perceptual features while maintaining computational efficiency suitable for interactive applications and large-scale mesh processing pipelines.
+\end{abstract}

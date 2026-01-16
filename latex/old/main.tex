@@ -1,0 +1,36 @@
+% Mesh Segmentation Algorithm Paper
+\documentclass[11pt]{article}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+% Title and author
+\title{A Practical and Robust Algorithm for 3D Mesh Segmentation}
+\author{Your Name}
+\date{January 2026}
+
+\begin{document}
+
+\maketitle
+
+% Abstract
+\begin{abstract}
+Mesh segmentation is a fundamental problem in computer graphics and vision, enabling applications such as shape analysis, object recognition, and 3D modeling. We present a practical and robust algorithm for segmenting 3D triangle meshes based on greedy region growing and curvature-aware adjacency graph construction. Our method leverages spatial and geometric cues to propagate segment labels from user-defined or automatically selected seed faces, producing perceptually meaningful regions with clean boundaries. Unlike global optimization approaches, our algorithm prioritizes simplicity, computational efficiency, and ease of implementation, making it suitable for real-world scenarios and interactive systems. We evaluate our approach on a variety of synthetic and real-world meshes, demonstrating competitive segmentation quality and boundary regularity. The proposed method offers a flexible foundation for further research and practical deployment in mesh processing pipelines.
+\end{abstract}
+
+% Introduction
+\section{Introduction}
+Mesh segmentation, the process of partitioning a 3D surface into meaningful subregions, is a cornerstone of modern computer graphics, vision, and geometric modeling. Accurate segmentation enables a wide range of downstream tasks, including shape analysis, object recognition, texture mapping, and animation. Despite its importance, mesh segmentation remains challenging due to the diversity of mesh structures, geometric complexity, and the need for perceptually coherent boundaries.
+
+Traditional segmentation algorithms span spectral clustering, graph cuts, region growing, and learning-based methods. While global optimization techniques often yield high-quality results, they can be computationally expensive and sensitive to parameter choices. Region growing approaches, on the other hand, offer simplicity and efficiency but may struggle with boundary regularity and perceptual accuracy.
+
+In this work, we introduce a robust and practical mesh segmentation algorithm that combines greedy region growing with curvature-aware adjacency graph construction. Our method propagates segment labels from a set of seed faces, leveraging both spatial proximity and geometric cues to produce segments that align with human perception. The algorithm is designed for ease of implementation, computational efficiency, and adaptability to various mesh types and application scenarios.
+
+We evaluate our approach on synthetic and real-world meshes, demonstrating its effectiveness in producing clean segment boundaries and perceptually meaningful regions. The proposed method provides a flexible foundation for further research and integration into mesh processing pipelines.
+
+% (Add further sections here as you develop the paper)
+
+\end{document}

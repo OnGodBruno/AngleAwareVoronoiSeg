@@ -1,0 +1,144 @@
+% Methodology
+\section{Methodology}
+\label{sec:methodology}
+
+Our segmentation algorithm operates on triangle meshes represented as pairs $\mathcal{M} = (\mathcal{V}, \mathcal{F})$, where $\mathcal{V} \subset \mathbb{R}^3$ denotes vertices and $\mathcal{F}$ denotes triangular faces. Given a user-provided set of seed faces, the algorithm proceeds in two stages: (1) construction of a curvature-aware face adjacency graph, and (2) geodesic Voronoi partitioning through multi-source shortest-path computation.
+
+\subsection{Curvature-Aware Face Adjacency Graph}
+
+We construct a weighted undirected graph $\mathcal{G} = (\mathcal{F}, \mathcal{E}, w)$ where nodes correspond to mesh faces, edges connect adjacent faces sharing a mesh edge, and weights encode geometric relationships.
+
+\subsubsection{Face Representation}
+
+For each face $f_i \in \mathcal{F}$, we compute:
+\begin{itemize}
+    \item \textbf{Centroid}: $\mathbf{c}_i = \frac{1}{3}\sum_{v \in f_i} \mathbf{v}$, the arithmetic mean of vertex positions
+    \item \textbf{Normal}: $\mathbf{n}_i$, the unit outward-facing normal vector
+\end{itemize}
+
+\subsubsection{Edge Weight Formulation}
+
+For adjacent faces $f_i$ and $f_j$ sharing a mesh edge, we define the edge weight as:
+\begin{equation}
+    w(f_i, f_j) = w_{\text{spatial}}(f_i, f_j) + w_{\text{curvature}}(f_i, f_j)
+\end{equation}
+
+The \textbf{spatial penalty} discourages traversing large distances between face centroids, normalized by the mean edge length $\bar{\ell}$ to provide scale invariance:
+\begin{equation}
+    w_{\text{spatial}}(f_i, f_j) = 1 + \left(\frac{\|\mathbf{c}_i - \mathbf{c}_j\|}{\bar{\ell}}\right)^2
+\end{equation}
+
+The \textbf{curvature penalty} exponentially penalizes traversal across faces with differing orientations, using the dihedral angle $\theta_{ij} = \arccos(\mathbf{n}_i \cdot \mathbf{n}_j)$ between face normals:
+\begin{equation}
+    w_{\text{curvature}}(f_i, f_j) = \exp(\lambda \cdot \theta_{ij})
+\end{equation}
+
+where $\lambda > 0$ is the curvature penalty strength parameter. This exponential formulation has several desirable properties:
+\begin{itemize}
+    \item For $\theta_{ij} \approx 0$ (coplanar faces), the penalty approaches 1, permitting easy propagation
+    \item For $\theta_{ij} \approx \pi/2$ (perpendicular faces), the penalty grows to $\exp(\lambda \pi/2)$, creating strong barriers
+    \item The exponential function ensures smooth gradients while providing aggressive penalization at sharp features
+\end{itemize}
+
+Figure~\ref{fig:weight_function} illustrates the combined weight function for varying curvature penalty strengths.
+
+\subsubsection{Sparse Matrix Construction}
+
+The weighted adjacency graph is stored as a sparse CSR (Compressed Sparse Row) matrix $\mathbf{W} \in \mathbb{R}^{n \times n}$, exploiting the fact that each face has at most three neighbors. Construction proceeds by iterating over the mesh's face adjacency list, computing weights for each pair, and symmetrizing the result. Total construction complexity is $\mathcal{O}(n)$ for $n$ faces.
+
+
+\subsection{Geodesic Voronoi Segmentation}
+
+Given the weighted face graph $\mathcal{G}$ and seed set $\mathcal{S}$, we compute the geodesic Voronoi partition by assigning each face to its nearest seed in the graph metric.
+
+\subsubsection{Multi-Source Dijkstra}
+
+We compute shortest-path distances from all seeds simultaneously using a multi-source variant of Dijkstra's algorithm. Given $k$ seed faces and sparse adjacency matrix $\mathbf{W}$, we compute the distance matrix:
+\begin{equation}
+    \mathbf{D} \in \mathbb{R}^{k \times n}, \quad D_{ji} = d_{\mathcal{G}}(s_j, f_i)
+\end{equation}
+
+where $d_{\mathcal{G}}(s_j, f_i)$ is the shortest-path distance from seed $s_j$ to face $f_i$ in graph $\mathcal{G}$.
+
+\subsubsection{Segment Assignment}
+
+Each face is assigned to its nearest seed:
+\begin{equation}
+    \text{label}(f_i) = \arg\min_{j \in \{1, \ldots, k\}} D_{ji}
+\end{equation}
+
+This assignment partitions the mesh into $k$ segments, each forming a geodesic Voronoi cell centered at its seed. The partition inherits desirable properties from the Voronoi construction:
+\begin{itemize}
+    \item \textbf{Completeness}: Every reachable face is assigned to exactly one segment
+    \item \textbf{Nearest-neighbor}: Each face belongs to its closest seed in the weighted metric
+    \item \textbf{Boundary localization}: Segment boundaries naturally form at geometric discontinuities where the curvature penalty creates competing distance fronts
+\end{itemize}
+
+Using standard priority-queue Dijkstra with binary heaps, the segmentation step runs in $\mathcal{O}(k(n + m)\log n) = \mathcal{O}(kn \log n)$ for sparse graphs with $m = \mathcal{O}(n)$ edges.
+
+\subsection{Algorithm Summary}
+
+Algorithm~\ref{alg:full_segmentation} presents the complete segmentation procedure.
+
+\begin{algorithm}[H]
+\caption{Angle-Aware Geodesic Voronoi Segmentation}
+\label{alg:full_segmentation}
+\begin{algorithmic}[1]
+\Require Mesh $\mathcal{M} = (\mathcal{V}, \mathcal{F})$, seed faces $\mathcal{S} = \{s_1, \ldots, s_k\}$, curvature penalty $\lambda$
+\Ensure Face labels $\{\text{label}(f_i)\}_{i=1}^n$
+\State Compute face centroids $\{\mathbf{c}_i\}$ and normals $\{\mathbf{n}_i\}$
+\State Extract face adjacency pairs $\{(f_i, f_j)\}$ from mesh topology
+\State $\bar{\ell} \gets \text{mean}(\text{edge lengths})$
+\For{each adjacent pair $(f_i, f_j)$}
+    \State $\theta_{ij} \gets \arccos(\mathbf{n}_i \cdot \mathbf{n}_j)$
+    \State $w_{ij} \gets 1 + (\|\mathbf{c}_i - \mathbf{c}_j\|/\bar{\ell})^2 + \exp(\lambda \cdot \theta_{ij})$
+\EndFor
+\State Construct sparse adjacency matrix $\mathbf{W}$
+\Comment{Seeds $\mathcal{S}$ provided as input}
+\State $\mathbf{D} \gets \textsc{MultiSourceDijkstra}(\mathbf{W}, \mathcal{S})$
+\For{each face $f_i$}
+    \State $\text{label}(f_i) \gets \arg\min_j D_{ji}$
+\EndFor
+\State \Return $\{\text{label}(f_i)\}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Complexity Analysis}
+
+Table~\ref{tab:complexity} summarizes the computational complexity of each algorithmic stage.
+
+\begin{table}[h]
+\centering
+\caption{Computational Complexity Summary}
+\label{tab:complexity}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Stage} & \textbf{Time} & \textbf{Space} \\
+\midrule
+Graph construction & $\mathcal{O}(n)$ & $\mathcal{O}(n)$ \\
+Multi-source Dijkstra & $\mathcal{O}(kn \log n)$ & $\mathcal{O}(kn)$ \\
+Label assignment & $\mathcal{O}(kn)$ & $\mathcal{O}(n)$ \\
+\midrule
+\textbf{Total} & $\mathcal{O}(kn \log n)$ & $\mathcal{O}(kn)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For typical segmentation scenarios with $k \ll n$ (e.g., $k \in [5, 50]$ for meshes with $n \in [10^4, 10^6]$), the algorithm scales nearly linearly with mesh size.
+
+\subsection{Parameter Selection}
+
+The algorithm exposes two primary parameters:
+
+\begin{itemize}
+    \item \textbf{Seed faces $\mathcal{S}$}: User-provided seed faces that serve as Voronoi centers. The number of seeds controls segmentation granularity; selection depends on application requirements and mesh complexity.
+    
+    \item \textbf{Curvature penalty $\lambda$}: Controls sensitivity to geometric features. We recommend $\lambda \in [10, 200]$:
+    \begin{itemize}
+        \item $\lambda \approx 10$: Weak feature sensitivity, smoother boundaries
+        \item $\lambda \approx 100$: Balanced behavior (default)
+        \item $\lambda \approx 200$: Strong feature preservation, tight boundaries at creases
+    \end{itemize}
+\end{itemize}
+
+The exponential penalty ensures the algorithm is relatively insensitive to the precise choice of $\lambda$ for typical meshes; the primary effect is boundary sharpness at geometric discontinuities.

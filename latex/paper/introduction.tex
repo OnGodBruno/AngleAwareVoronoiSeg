@@ -1,0 +1,26 @@
+% Introduction
+\section{Introduction}
+
+Mesh segmentation---the decomposition of a 3D surface into geometrically or semantically coherent regions---is a foundational operation in computer graphics, computational geometry, and 3D vision. Applications span diverse domains: shape-aware texture mapping, skeletal rigging for character animation, semantic part labeling for object recognition, mesh simplification with feature preservation, and interactive 3D modeling tools. The quality of downstream tasks often depends critically on obtaining segment boundaries that align with human perceptual expectations, particularly at geometric features such as sharp edges, creases, and high-curvature regions.
+
+\subsection{Related Work}
+
+Existing approaches to mesh segmentation broadly fall into several categories. \textbf{Spectral methods}~\cite{liu2004spectral} compute eigenvectors of the mesh Laplacian to embed faces in a low-dimensional space amenable to clustering, but incur significant computational overhead for eigendecomposition on large meshes. \textbf{Graph-cut and energy minimization} approaches~\cite{katz2003hierarchical} formulate segmentation as global optimization problems, achieving high-quality boundaries at the cost of complex energy function design and NP-hard combinatorial optimization. \textbf{Region-growing methods}~\cite{lavoue2005curvature} iteratively expand regions from seed faces based on local similarity criteria, offering simplicity and efficiency but often struggling with boundary regularity. \textbf{Learning-based methods}~\cite{kalogerakis2010learning} leverage annotated datasets to predict semantic parts, excelling at category-specific segmentation but requiring extensive training data and generalization challenges across shape categories.
+
+\subsection{Motivation}
+
+Despite the diversity of existing techniques, a gap remains for methods that simultaneously satisfy practical requirements: (1) computational efficiency suitable for interactive applications and large meshes, (2) intuitive parameterization without extensive tuning, (3) deterministic reproducibility, and (4) natural alignment with geometric features without explicit feature detection. Region-growing approaches satisfy efficiency requirements but typically use uniform or purely spatial metrics that ignore geometric context. Voronoi-based partitioning provides elegant theoretical guarantees but requires careful metric design to respect mesh geometry.
+
+\subsection{Contributions}
+
+This paper introduces a geodesic Voronoi segmentation algorithm with the following contributions:
+
+\begin{enumerate}
+    \item \textbf{Angle-aware edge weighting}: We propose a curvature-sensitive weight function combining spatial distance with an exponential penalty on the dihedral angle between adjacent face normals. This formulation creates natural barriers at sharp features while permitting smooth propagation across flat regions.
+    
+    \item \textbf{Multi-source geodesic propagation}: Segment assignment via simultaneous Dijkstra shortest-path computation from all user-provided seeds yields Voronoi cells in the weighted graph metric, guaranteeing each face belongs to its nearest seed region.
+    
+    \item \textbf{Practical implementation}: We provide a complete, efficient implementation using sparse matrix representations and standard shortest-path algorithms, achieving $\mathcal{O}(k \cdot n \log n)$ complexity for $k$ seeds on $n$-face meshes.
+\end{enumerate}
+
+The remainder of this paper is organized as follows: Section~\ref{sec:methodology} details our segmentation algorithm, including graph construction and geodesic propagation. Section~\ref{sec:experiments} presents experimental evaluation on synthetic and real-world meshes, and Section~\ref{sec:conclusion} concludes with discussion of limitations and future directions.

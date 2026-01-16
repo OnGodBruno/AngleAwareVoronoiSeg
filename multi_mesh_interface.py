@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 from werkzeug.utils import secure_filename
 from segment_mesh import load_and_clean_mesh, build_adjacency_graph, segment_mesh, export_segment
+from segment_mesh_experimental import segment_mesh as segment_mesh_experimental
 import glob
 from pathlib import Path
 
@@ -153,6 +154,11 @@ def calibration():
 def viewer():
     """Serve the multi-mesh viewer page."""
     return render_template('viewer.html')
+
+@app.route('/new_change_comparison')
+def new_change_comparison():
+    """Serve the change comparison page."""
+    return render_template('change_comparison.html')
 
 @app.route('/api/meshes', methods=['GET'])
 def get_meshes():
@@ -336,14 +342,15 @@ def segment_all():
             )
             
             # Convert result to JSON-serializable format
+            face_labels = [segmentation_result.get(i, -1) for i in range(len(mesh.faces))]
             vertices = mesh.vertices.tolist()
             faces = mesh.faces.tolist()
-            face_labels = segmentation_result.tolist() if hasattr(segmentation_result, 'tolist') else segmentation_result
+            face_labels_array = face_labels
             
             results[filename] = {
                 'vertices': vertices,
                 'faces': faces,
-                'face_labels': face_labels,
+                'face_labels': face_labels_array,
                 'n_segments': len(seed_faces),
                 'seed_colors': [seed.get('color', 'red') if isinstance(seed, dict) else 'red' for seed in config['seed_points']],
                 'seed_faces': seed_faces
@@ -356,6 +363,83 @@ def segment_all():
             'results': results
         })
     except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/api/compare_segmentation/<filename>', methods=['GET'])
+def compare_segmentation(filename):
+    """Compare segmentation results between original and experimental algorithms."""
+    try:
+        mesh_path = os.path.join(app.config['MESHES_FOLDER'], filename)
+        if not os.path.exists(mesh_path):
+            return jsonify({'success': False, 'error': 'Mesh file not found'})
+        
+        config = load_mesh_config(filename)
+        if not config:
+            return jsonify({'success': False, 'error': 'Mesh not configured with seed points'})
+        
+        mesh_data = load_mesh_data(mesh_path)
+        if not mesh_data:
+            return jsonify({'success': False, 'error': 'Failed to load mesh data'})
+        
+        mesh = mesh_data['mesh']
+        sparse_matrix = mesh_data['sparse_matrix']
+        face_centers = mesh_data['face_centers']
+        
+        # Convert seed points to face indices
+        seed_faces = [seed['face_index'] if isinstance(seed, dict) else seed for seed in config['seed_points']]
+        
+        # Run original segmentation
+        original_result = segment_mesh(sparse_matrix, seed_faces)
+        original_labels = [original_result.get(i, -1) for i in range(len(mesh.faces))]
+
+        # Run experimental segmentation (rebuild adjacency graph with experimental logic)
+
+        from segment_mesh_experimental import build_adjacency_graph as build_adjacency_graph_experimental
+        from segment_mesh_experimental import smooth_segment_boundaries, cleanup_small_regions
+        exp_sparse_matrix, _ = build_adjacency_graph_experimental(mesh, config.get('curvature_penalty_strength', 100.0), user_seeds=None)
+        experimental_result = segment_mesh_experimental(exp_sparse_matrix, seed_faces)
+        
+        # Apply post-processing to smooth boundaries and cleanup small regions
+        experimental_result = smooth_segment_boundaries(mesh, experimental_result, iterations=8)
+        experimental_result = cleanup_small_regions(mesh, experimental_result, min_region_size=5)
+        
+        experimental_labels = [experimental_result.get(i, -1) for i in range(len(mesh.faces))]
+
+        # Prepare mesh data for Three.js
+        vertices = mesh.vertices.tolist()
+        faces = mesh.faces.tolist()
+        face_centers_list = mesh.triangles_center.tolist()
+
+        return jsonify({
+            'success': True,
+            'mesh_data': {
+                'vertices': vertices,
+                'faces': faces,
+                'face_centers': face_centers_list,
+                'total_faces': len(mesh.faces),
+                'filename': filename
+            },
+            'original_segmentation': {
+                'face_labels': original_labels,
+                'n_segments': len(seed_faces),
+                'seed_colors': [seed.get('color', 'red') if isinstance(seed, dict) else 'red' for seed in config['seed_points']],
+                'seed_faces': seed_faces
+            },
+            'experimental_segmentation': {
+                'face_labels': experimental_labels,
+                'n_segments': len(seed_faces),
+                'seed_colors': [seed.get('color', 'blue') if isinstance(seed, dict) else 'blue' for seed in config['seed_points']],
+                'seed_faces': seed_faces
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error in compare_segmentation: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
