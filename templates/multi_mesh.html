@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Mesh AAVS - Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #8b5cf6;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --bg-primary: #0f0f23;
+            --bg-secondary: #1a1a2e;
+            --bg-tertiary: #16213e;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #64748b;
+            --border-color: #334155;
+            --border-hover: #475569;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --shadow-primary: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            font-size: 14px;
+            line-height: 1.5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            max-width: 1200px;
+            padding: 40px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        
+        .header h1 {
+            font-size: 48px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 16px;
+        }
+        
+        .header .subtitle {
+            color: var(--text-secondary);
+            font-size: 18px;
+            font-weight: 400;
+        }
+        
+        .workflow-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 32px;
+            margin-bottom: 60px;
+        }
+        
+        .card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            padding: 32px;
+            transition: all 0.3s ease;
+            box-shadow: var(--shadow-glass);
+        }
+        
+        .card:hover {
+            transform: translateY(-4px);
+            border-color: var(--primary-color);
+            box-shadow: 0 20px 40px rgba(99, 102, 241, 0.2);
+        }
+        
+        .card-icon {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-light));
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 24px;
+            color: white;
+            font-size: 24px;
+        }
+        
+        .card h3 {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+        
+        .card p {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+        
+        .btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+        
+        .btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--border-color);
+            color: var(--text-primary);
+            border-color: var(--border-hover);
+        }
+        
+        .status-section {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            padding: 32px;
+            text-align: center;
+        }
+        
+        .status-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        
+        .mesh-status {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+        
+        .mesh-item {
+            background: var(--bg-tertiary);
+            border: 2px solid transparent;
+            border-radius: 12px;
+            padding: 16px;
+            transition: all 0.3s ease;
+        }
+        
+        .mesh-item.configured {
+            border-color: var(--success-color);
+        }
+        
+        .mesh-item.unconfigured {
+            border-color: var(--warning-color);
+        }
+        
+        .mesh-name {
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+        
+        .mesh-details {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .loading {
+            display: none;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .feature-list {
+            list-style: none;
+            margin-top: 16px;
+        }
+        
+        .feature-list li {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+        
+        .feature-list li i {
+            color: var(--success-color);
+            margin-right: 8px;
+            width: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Multi-Mesh AAVS</h1>
+            <p class="subtitle">Angle Aware Voronoi Segmentation for Multiple Meshes</p>
+        </div>
+        
+        <div class="workflow-cards">
+            <div class="card">
+                <div class="card-icon">
+                    <i class="fas fa-crosshairs"></i>
+                </div>
+                <h3>1. Calibrate</h3>
+                <p>Set up seed points for each mesh in your collection. Click on faces to define segments that will guide the segmentation algorithm.</p>
+                <ul class="feature-list">
+                    <li><i class="fas fa-check"></i> Interactive 3D mesh viewer</li>
+                    <li><i class="fas fa-check"></i> Visual seed point placement</li>
+                    <li><i class="fas fa-check"></i> Configuration persistence</li>
+                    <li><i class="fas fa-check"></i> Multi-segment support</li>
+                </ul>
+                <a href="/calibration" class="btn">Start Calibration</a>
+            </div>
+            
+            <div class="card">
+                <div class="card-icon">
+                    <i class="fas fa-cubes"></i>
+                </div>
+                <h3>2. Segment & View</h3>
+                <p>Process all configured meshes simultaneously and view the segmented results in an interactive multi-mesh viewer.</p>
+                <ul class="feature-list">
+                    <li><i class="fas fa-check"></i> Batch processing</li>
+                    <li><i class="fas fa-check"></i> Real-time visualization</li>
+                    <li><i class="fas fa-check"></i> Grid and single view modes</li>
+                    <li><i class="fas fa-check"></i> Export capabilities</li>
+                </ul>
+                <a href="/viewer" class="btn">Open Viewer</a>
+            </div>
+            
+            <div class="card">
+                <div class="card-icon">
+                    <i class="fas fa-upload"></i>
+                </div>
+                <h3>3. Add New Meshes</h3>
+                <p>Simply add GLB files to the meshes folder and they will automatically appear in both calibration and viewer interfaces.</p>
+                <ul class="feature-list">
+                    <li><i class="fas fa-check"></i> Automatic discovery</li>
+                    <li><i class="fas fa-check"></i> GLB/OBJ/GLTF support</li>
+                    <li><i class="fas fa-check"></i> Hot reload capability</li>
+                    <li><i class="fas fa-check"></i> Scalable workflow</li>
+                </ul>
+                <a href="#" class="btn btn-secondary">Add meshes to /meshes folder</a>
+            </div>
+        </div>
+        
+        <div class="status-section">
+            <div class="status-title">
+                <i class="fas fa-chart-pie"></i>
+                Current Mesh Status
+            </div>
+            <div class="loading" id="statusLoading">Loading mesh status...</div>
+            <div class="mesh-status" id="meshStatus"></div>
+        </div>
+    </div>
+    
+    <script>
+        async function loadMeshStatus() {
+            try {
+                document.getElementById('statusLoading').classList.add('show');
+                
+                const response = await fetch('/api/meshes');
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderMeshStatus(data.meshes);
+                }
+            } catch (error) {
+                console.error('Error loading mesh status:', error);
+            } finally {
+                document.getElementById('statusLoading').classList.remove('show');
+            }
+        }
+        
+        function renderMeshStatus(meshes) {
+            const statusContainer = document.getElementById('meshStatus');
+            statusContainer.innerHTML = '';
+            
+            if (meshes.length === 0) {
+                statusContainer.innerHTML = '<p style="color: var(--text-muted);">No meshes found in the meshes folder. Add some GLB files to get started!</p>';
+                return;
+            }
+            
+            meshes.forEach(mesh => {
+                const item = document.createElement('div');
+                item.className = `mesh-item ${mesh.configured ? 'configured' : 'unconfigured'}`;
+                
+                item.innerHTML = `
+                    <div class="mesh-name">${mesh.filename}</div>
+                    <div class="mesh-details">
+                        ${mesh.configured 
+                            ? `✓ Configured with ${mesh.seed_count} segments` 
+                            : '⚠ Needs calibration'
+                        }
+                    </div>
+                `;
+                
+                statusContainer.appendChild(item);
+            });
+        }
+        
+        // Load status when page loads
+        window.onload = loadMeshStatus;
+    </script>
+</body>
+</html>

@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mesh Calibration - AAVS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #8b5cf6;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --bg-primary: #0f0f23;
+            --bg-secondary: #1a1a2e;
+            --bg-tertiary: #16213e;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #64748b;
+            --border-color: #334155;
+            --border-hover: #475569;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --shadow-primary: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            overflow: hidden;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #controls {
+            width: 380px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid var(--glass-border);
+            overflow-y: auto;
+            padding: 24px;
+            box-shadow: var(--shadow-glass);
+            z-index: 10;
+        }
+        
+        #viewer {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(ellipse at center, rgba(99, 102, 241, 0.1) 0%, var(--bg-primary) 70%);
+        }
+        
+        .header {
+            margin-bottom: 32px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        
+        .header .subtitle {
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 400;
+        }
+        
+        .control-section {
+            margin-bottom: 28px;
+            padding: 20px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        
+        .control-section:hover {
+            border-color: var(--border-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-primary);
+        }
+        
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .section-title i {
+            color: var(--primary-color);
+            font-size: 18px;
+        }
+        
+        .mesh-selector {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .mesh-item {
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .mesh-item:hover {
+            border-color: var(--primary-color);
+            background: rgba(99, 102, 241, 0.1);
+        }
+        
+        .mesh-item.active {
+            border-color: var(--primary-color);
+            background: rgba(99, 102, 241, 0.2);
+        }
+        
+        .mesh-info {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .mesh-name {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+        
+        .mesh-status {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        .mesh-badge {
+            background: var(--success-color);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+        
+        .mesh-badge.unconfigured {
+            background: var(--warning-color);
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-primary);
+            border-radius: 12px;
+            font-family: inherit;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            cursor: pointer;
+            margin-bottom: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            border: none;
+            color: white;
+            font-weight: 600;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.3);
+        }
+        
+        .btn-primary:disabled {
+            background: var(--border-color);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--border-hover);
+        }
+        
+        .color-selector {
+            margin-bottom: 16px;
+        }
+        
+        .color-options {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+        }
+        
+        .color-option {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .color-option:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .color-option.active {
+            border: 3px solid var(--primary-color);
+            transform: scale(1.15);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+        }
+        
+        .color-option.active::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
+            font-size: 12px;
+        }
+        
+        .seed-counter {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 8px;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 12px;
+        }
+        
+        .seed-list {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            max-height: 180px;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+        }
+        
+        .seed-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        
+        .seed-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        
+        .seed-color-indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            margin-right: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .seed-remove-btn {
+            background: var(--error-color);
+            color: white;
+            border: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .status-container {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 1000;
+            max-width: 400px;
+        }
+        
+        .status {
+            padding: 16px 20px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            animation: slideIn 0.3s ease;
+            box-shadow: var(--shadow-primary);
+        }
+        
+        .status.success {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: var(--success-color);
+        }
+        
+        .status.error {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: rgba(239, 68, 68, 0.3);
+            color: var(--error-color);
+        }
+        
+        .status.info {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: rgba(99, 102, 241, 0.3);
+            color: var(--primary-color);
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .debug-info {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--success-color);
+            max-width: 400px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+            font-size: 13px;
+        }
+        
+        .nav-link:hover {
+            background: var(--glass-bg);
+            color: var(--text-primary);
+        }
+        
+        .nav-link.active {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .instructions {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 24px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .instructions strong {
+            color: var(--primary-color);
+            display: block;
+            margin-bottom: 8px;
+        }
+        
+        input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-primary);
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary-color);
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-dark);
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <div class="header">
+                <h1>Mesh Calibration</h1>
+                <p class="subtitle">Configure seed points for segmentation</p>
+            </div>
+            
+            <div class="nav-links">
+                <a href="/calibration" class="nav-link active">Calibration</a>
+                <a href="/viewer" class="nav-link">Viewer</a>
+            </div>
+            
+            <div class="instructions">
+                <strong>Instructions</strong>
+                • Select a mesh from the list below<br>
+                • Choose a seed color<br>
+                • Click on faces in the 3D viewer to add seed points<br>
+                • Save configuration when finished<br>
+                • Repeat for all meshes you want to segment
+            </div>
+            
+            <div class="control-section">
+                <div class="section-title">
+                    <i class="fas fa-cubes"></i>
+                    Available Meshes
+                </div>
+                <div class="mesh-selector" id="meshSelector">
+                    <div style="text-align: center; color: var(--text-muted); padding: 20px;">Loading meshes...</div>
+                </div>
+            </div>
+            
+            <div class="control-section" id="seedControls" style="display: none;">
+                <div class="section-title">
+                    <i class="fas fa-palette"></i>
+                    Seed Color
+                </div>
+                <div class="color-selector">
+                    <div class="color-options" id="colorOptions"></div>
+                </div>
+                
+                <div class="section-title">
+                    <i class="fas fa-crosshairs"></i>
+                    Seed Points
+                </div>
+                <div class="seed-counter">
+                    <i class="fas fa-bullseye"></i>
+                    <span id="seedCount">0</span> seeds placed
+                </div>
+                <div class="seed-list" id="seedList"></div>
+                <button class="btn btn-secondary" onclick="clearSeeds()">
+                    <i class="fas fa-trash"></i> Clear All Seeds
+                </button>
+                <button class="btn btn-primary" onclick="saveConfiguration()" id="saveBtn" disabled>
+                    <i class="fas fa-save"></i> Save Configuration
+                </button>
+            </div>
+        </div>
+        
+        <div id="viewer"></div>
+        <div class="debug-info" id="debugInfo">Initializing...</div>
+    </div>
+    
+    <div class="status-container" id="statusContainer"></div>
+    
+    <script>
+        let scene, camera, renderer, controls;
+        let meshObject = null;
+        let raycaster, mouse;
+        let meshes = [];
+        let currentMesh = null;
+        let selectedSeeds = [];
+        let currentMeshData = null;
+        let currentSeedColor = 'red';
+        
+        // Seed colors matching the working interface
+        const seedColors = {
+            'red': [1.0, 0.2, 0.2],
+            'green': [0.2, 1.0, 0.2], 
+            'blue': [0.2, 0.4, 1.0],
+            'yellow': [1.0, 1.0, 0.2],
+            'magenta': [1.0, 0.2, 1.0],
+            'cyan': [0.2, 1.0, 1.0],
+            'orange': [1.0, 0.6, 0.2],
+            'purple': [0.6, 0.2, 1.0],
+            'lime': [0.6, 1.0, 0.2],
+            'pink': [1.0, 0.4, 0.8],
+            'teal': [0.2, 0.8, 0.8],
+            'brown': [0.8, 0.4, 0.2]
+        };
+        
+        function updateDebugInfo(message) {
+            const debugInfo = document.getElementById('debugInfo');
+            if (debugInfo) {
+                const timestamp = new Date().toLocaleTimeString();
+                debugInfo.innerHTML += `[${timestamp}] ${message}<br>`;
+                debugInfo.scrollTop = debugInfo.scrollHeight;
+            }
+            console.log(message);
+        }
+        
+        function showStatus(message, type) {
+            const container = document.getElementById('statusContainer');
+            const status = document.createElement('div');
+            status.className = `status ${type}`;
+            status.textContent = message;
+            container.appendChild(status);
+            
+            setTimeout(() => {
+                status.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => {
+                    if (status.parentNode) {
+                        status.parentNode.removeChild(status);
+                    }
+                }, 300);
+            }, 4000);
+        }
+        
+        function initThreeJS() {
+            updateDebugInfo('Initializing Three.js...');
+            
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e);
+            
+            // Camera
+            const viewerWidth = window.innerWidth - 380;
+            const viewerHeight = window.innerHeight;
+            camera = new THREE.PerspectiveCamera(75, viewerWidth / viewerHeight, 0.1, 1000);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(viewerWidth, viewerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.setClearColor(0x1a1a2e, 1);
+            
+            document.getElementById('viewer').appendChild(renderer.domElement);
+            
+            // Load OrbitControls
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js';
+            script.onload = function() {
+                // Controls
+                controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                controls.screenSpacePanning = false;
+                controls.minDistance = 1;
+                controls.maxDistance = 100;
+                
+                updateDebugInfo('OrbitControls initialized');
+            };
+            document.head.appendChild(script);
+            
+            // Lighting setup
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambientLight);
+            
+            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.6);
+            directionalLight1.position.set(10, 10, 10);
+            directionalLight1.castShadow = true;
+            scene.add(directionalLight1);
+            
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+            directionalLight2.position.set(-10, -10, -10);
+            scene.add(directionalLight2);
+            
+            // Raycasting for mesh interaction
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            
+            // Event listeners
+            renderer.domElement.addEventListener('click', onMeshClick, false);
+            window.addEventListener('resize', onWindowResize, false);
+            
+            // Position camera
+            camera.position.set(6, 6, 6);
+            camera.lookAt(0, 0, 0);
+            
+            // Start animation loop
+            animate();
+            
+            updateDebugInfo('Three.js initialization complete');
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls) controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            const viewerWidth = window.innerWidth - 380;
+            const viewerHeight = window.innerHeight;
+            
+            camera.aspect = viewerWidth / viewerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(viewerWidth, viewerHeight);
+        }
+        
+        function onMeshClick(event) {
+            if (!meshObject || !currentMeshData) return;
+            
+            // Calculate mouse position in normalized device coordinates
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            // Cast ray from camera through mouse position
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Find intersections
+            const intersects = raycaster.intersectObject(meshObject);
+            
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                const faceIndex = intersection.faceIndex;
+                const position = intersection.point;
+                
+                updateDebugInfo(`Clicked face ${faceIndex} at position (${position.x.toFixed(3)}, ${position.y.toFixed(3)}, ${position.z.toFixed(3)})`);
+                addSeed(position.x, position.y, position.z, faceIndex);
+            }
+        }
+        
+        async function loadMeshList() {
+            try {
+                updateDebugInfo('Loading mesh list...');
+                
+                const response = await fetch('/api/meshes');
+                const data = await response.json();
+                
+                if (data.success) {
+                    meshes = data.meshes;
+                    updateDebugInfo(`Loaded ${meshes.length} meshes`);
+                    renderMeshList();
+                } else {
+                    showStatus('Error loading meshes: ' + data.error, 'error');
+                    updateDebugInfo('Error loading meshes: ' + data.error);
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+                updateDebugInfo('Network error: ' + error.message);
+            }
+        }
+        
+        function renderMeshList() {
+            const selector = document.getElementById('meshSelector');
+            selector.innerHTML = '';
+            
+            if (meshes.length === 0) {
+                selector.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 20px;">No meshes found</div>';
+                return;
+            }
+            
+            meshes.forEach(mesh => {
+                const item = document.createElement('div');
+                item.className = 'mesh-item';
+                item.onclick = () => selectMesh(mesh.filename);
+                
+                item.innerHTML = `
+                    <div class="mesh-info">
+                        <div class="mesh-name">${mesh.filename}</div>
+                        <div class="mesh-status">
+                            ${mesh.configured ? `${mesh.seed_count} seed points` : 'Not configured'}
+                        </div>
+                    </div>
+                    <div class="mesh-badge ${mesh.configured ? '' : 'unconfigured'}">
+                        ${mesh.configured ? 'Ready' : 'Setup'}
+                    </div>
+                `;
+                
+                selector.appendChild(item);
+            });
+        }
+        
+        async function selectMesh(filename) {
+            try {
+                updateDebugInfo(`Loading mesh: ${filename}`);
+                
+                // Update UI
+                document.querySelectorAll('.mesh-item').forEach(item => item.classList.remove('active'));
+                event.currentTarget.classList.add('active');
+                
+                const response = await fetch(`/api/load_mesh/${filename}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentMesh = filename;
+                    currentMeshData = data.mesh_data;
+                    updateDebugInfo(`Mesh loaded: ${currentMeshData.vertices.length} vertices, ${currentMeshData.faces.length} faces`);
+                    
+                    displayMesh(currentMeshData);
+                    
+                    // Load existing configuration if available
+                    if (data.config && data.config.seed_points) {
+                        // Convert face indices to seed positions and display them
+                        loadExistingSeeds(data.config.seed_points);
+                    } else {
+                        selectedSeeds = [];
+                    }
+                    
+                    updateSeedDisplay();
+                    document.getElementById('seedControls').style.display = 'block';
+                    showStatus(`Mesh ${filename} loaded successfully!`, 'success');
+                } else {
+                    showStatus('Error loading mesh: ' + data.error, 'error');
+                    updateDebugInfo('Error loading mesh: ' + data.error);
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+                updateDebugInfo('Network error: ' + error.message);
+            }
+        }
+        
+        function displayMesh(data) {
+            try {
+                updateDebugInfo(`Displaying mesh: ${data.vertices.length} vertices, ${data.faces.length} faces`);
+                
+                // Clear existing scene first
+                clearScene();
+                
+                // Validate input data
+                if (!data.vertices || !data.faces || data.vertices.length === 0 || data.faces.length === 0) {
+                    updateDebugInfo('ERROR: Invalid or empty mesh data');
+                    return;
+                }
+                
+                // Create geometry
+                const geometry = new THREE.BufferGeometry();
+                
+                // Convert vertices to flat array
+                const vertices = [];
+                for (let i = 0; i < data.vertices.length; i++) {
+                    const vertex = data.vertices[i];
+                    if (vertex && vertex.length >= 3) {
+                        vertices.push(vertex[0], vertex[1], vertex[2]);
+                    } else {
+                        updateDebugInfo(`ERROR: Invalid vertex at index ${i}: ${vertex}`);
+                        return;
+                    }
+                }
+                
+                // Convert faces to indices array and validate
+                const indices = [];
+                let maxVertexIndex = data.vertices.length - 1;
+                
+                for (let i = 0; i < data.faces.length; i++) {
+                    const face = data.faces[i];
+                    if (face && face.length >= 3) {
+                        // Validate face indices
+                        if (face[0] <= maxVertexIndex && face[1] <= maxVertexIndex && face[2] <= maxVertexIndex &&
+                            face[0] >= 0 && face[1] >= 0 && face[2] >= 0) {
+                            indices.push(face[0], face[1], face[2]);
+                        } else {
+                            updateDebugInfo(`ERROR: Invalid face indices at ${i}: [${face[0]}, ${face[1]}, ${face[2]}], max vertex: ${maxVertexIndex}`);
+                            return;
+                        }
+                    } else {
+                        updateDebugInfo(`ERROR: Invalid face at index ${i}: ${face}`);
+                        return;
+                    }
+                }
+                
+                updateDebugInfo(`Processed: ${vertices.length/3} vertices, ${indices.length/3} faces`);
+                
+                // Create buffer geometry with proper buffer management
+                const positionAttribute = new THREE.BufferAttribute(new Float32Array(vertices), 3);
+                positionAttribute.needsUpdate = true;
+                geometry.setAttribute('position', positionAttribute);
+                
+                // Only set indices if we have valid ones
+                if (indices.length > 0) {
+                    // Convert to appropriate array type based on vertex count
+                    let indexAttribute;
+                    if (maxVertexIndex < 65536) {
+                        indexAttribute = new THREE.BufferAttribute(new Uint16Array(indices), 1);
+                    } else {
+                        indexAttribute = new THREE.BufferAttribute(new Uint32Array(indices), 1);
+                    }
+                    indexAttribute.needsUpdate = true;
+                    geometry.setIndex(indexAttribute);
+                    updateDebugInfo(`Set indices: ${indices.length} elements`);
+                } else {
+                    updateDebugInfo('ERROR: No valid indices created');
+                    return;
+                }
+                
+                // Compute normals AFTER setting position and indices
+                try {
+                    geometry.computeVertexNormals();
+                    updateDebugInfo('Computed vertex normals');
+                } catch (normalError) {
+                    updateDebugInfo(`Warning: Could not compute normals: ${normalError.message}`);
+                }
+                
+                // Get bounding box
+                geometry.computeBoundingBox();
+                if (!geometry.boundingBox) {
+                    updateDebugInfo('ERROR: Could not compute bounding box');
+                    return;
+                }
+                
+                const box = geometry.boundingBox;
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                const maxDim = Math.max(size.x, size.y, size.z);
+                
+                updateDebugInfo(`Bounding box: center(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}) size(${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)}) maxDim: ${maxDim.toFixed(2)}`);
+                
+                // Create material
+                const material = new THREE.MeshLambertMaterial({
+                    color: 0x888888,
+                    side: THREE.DoubleSide
+                });
+                
+                // Create mesh
+                meshObject = new THREE.Mesh(geometry, material);
+                
+                // Reset position and scale
+                meshObject.position.set(0, 0, 0);
+                meshObject.scale.set(1, 1, 1);
+                
+                // Center the mesh
+                meshObject.position.copy(center).negate();
+                
+                // Scale the mesh to fit in a 4-unit cube
+                if (maxDim > 0) {
+                    const scale = 4 / maxDim;
+                    meshObject.scale.setScalar(scale);
+                    updateDebugInfo(`Applied scale: ${scale.toFixed(4)}`);
+                } else {
+                    updateDebugInfo('Warning: mesh has zero size!');
+                }
+                
+                // Add to scene
+                scene.add(meshObject);
+                updateDebugInfo('Mesh added to scene');
+                
+                // Position camera to see the mesh better
+                camera.position.set(6, 6, 6);
+                camera.lookAt(0, 0, 0);
+                if (controls) {
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+                
+                updateDebugInfo('Camera positioned - mesh should be visible');
+                
+                // Force a safe render
+                try {
+                    renderer.render(scene, camera);
+                    updateDebugInfo('Initial render successful');
+                } catch (renderError) {
+                    updateDebugInfo('Initial render failed: ' + renderError.message);
+                }
+                
+            } catch (error) {
+                updateDebugInfo('Error displaying mesh: ' + error.message);
+                showStatus('Error displaying mesh: ' + error.message, 'error');
+                console.error('Full error:', error);
+            }
+        }
+        
+        function clearScene() {
+            // Remove mesh object
+            if (meshObject) {
+                scene.remove(meshObject);
+                if (meshObject.geometry) meshObject.geometry.dispose();
+                if (meshObject.material) {
+                    if (meshObject.material.map) meshObject.material.map.dispose();
+                    meshObject.material.dispose();
+                }
+                meshObject = null;
+            }
+            
+            // Remove seed markers
+            const markersToRemove = [];
+            scene.traverse((child) => {
+                if (child.userData && child.userData.isSeedMarker) {
+                    markersToRemove.push(child);
+                }
+            });
+            markersToRemove.forEach(marker => {
+                scene.remove(marker);
+                if (marker.geometry) marker.geometry.dispose();
+                if (marker.material) marker.material.dispose();
+            });
+        }
+        
+        function addSeed(x, y, z, faceIndex) {
+            const seedData = {
+                position: [x, y, z],
+                face_index: faceIndex,
+                color: currentSeedColor,
+                colorRGB: seedColors[currentSeedColor]
+            };
+            selectedSeeds.push(seedData);
+            updateSeedDisplay();
+            
+            // Add visual marker with the selected color
+            const geometry = new THREE.SphereGeometry(0.04, 16, 16);
+            const colorRGB = seedColors[currentSeedColor];
+            const material = new THREE.MeshLambertMaterial({ 
+                color: new THREE.Color(colorRGB[0], colorRGB[1], colorRGB[2]),
+                opacity: 0.9,
+                transparent: true,
+                emissive: new THREE.Color(colorRGB[0] * 0.2, colorRGB[1] * 0.2, colorRGB[2] * 0.2),
+                emissiveIntensity: 0.3
+            });
+            const marker = new THREE.Mesh(geometry, material);
+            marker.position.set(x, y, z);
+            marker.userData = { 
+                isSeedMarker: true, 
+                seedIndex: selectedSeeds.length - 1,
+                seedColor: currentSeedColor,
+                faceIndex: faceIndex
+            };
+            scene.add(marker);
+            
+            showStatus(`${currentSeedColor.charAt(0).toUpperCase() + currentSeedColor.slice(1)} seed ${selectedSeeds.length} added`, 'success');
+            updateDebugInfo(`Added ${currentSeedColor} seed at face ${faceIndex}`);
+        }
+        
+        function loadExistingSeeds(seedData) {
+            // For existing seeds, use the saved seed data with colors
+            if (!currentMeshData || !currentMeshData.face_centers) return;
+            
+            selectedSeeds = [];
+            
+            seedData.forEach((seed, i) => {
+                if (seed.face_index < currentMeshData.face_centers.length) {
+                    const faceCenter = currentMeshData.face_centers[seed.face_index];
+                    // Use saved color or default to red
+                    const colorName = seed.color || 'red';
+                    // Temporarily set current color for addSeed
+                    const originalColor = currentSeedColor;
+                    currentSeedColor = colorName;
+                    addSeed(faceCenter[0], faceCenter[1], faceCenter[2], seed.face_index);
+                    currentSeedColor = originalColor;
+                }
+            });
+        }
+        
+        function updateSeedDisplay() {
+            const seedCount = document.getElementById('seedCount');
+            const seedList = document.getElementById('seedList');
+            
+            seedCount.textContent = selectedSeeds.length;
+            seedList.innerHTML = '';
+            
+            selectedSeeds.forEach((seed, index) => {
+                const item = document.createElement('div');
+                item.className = 'seed-item';
+                
+                const colorRGB = seedColors[seed.color];
+                const colorHex = `rgb(${Math.round(colorRGB[0]*255)}, ${Math.round(colorRGB[1]*255)}, ${Math.round(colorRGB[2]*255)})`;
+                
+                item.innerHTML = `
+                    <div style="display: flex; align-items: center;">
+                        <div class="seed-color-indicator" style="background-color: ${colorHex};"></div>
+                        <span>${seed.color} seed ${index + 1}</span>
+                    </div>
+                    <button class="seed-remove-btn" onclick="removeSeed(${index})">×</button>
+                `;
+                
+                seedList.appendChild(item);
+            });
+            
+            // Enable/disable save button
+            document.getElementById('saveBtn').disabled = selectedSeeds.length === 0;
+        }
+        
+        function removeSeed(index) {
+            // Remove from array
+            selectedSeeds.splice(index, 1);
+            
+            // Remove visual marker from scene
+            const markersToRemove = [];
+            scene.traverse((child) => {
+                if (child.userData && child.userData.isSeedMarker && child.userData.seedIndex === index) {
+                    markersToRemove.push(child);
+                }
+            });
+            markersToRemove.forEach(marker => {
+                scene.remove(marker);
+                if (marker.geometry) marker.geometry.dispose();
+                if (marker.material) marker.material.dispose();
+            });
+            
+            // Update indices for remaining markers
+            scene.traverse((child) => {
+                if (child.userData && child.userData.isSeedMarker && child.userData.seedIndex > index) {
+                    child.userData.seedIndex--;
+                }
+            });
+            
+            updateSeedDisplay();
+            showStatus('Seed point removed', 'info');
+        }
+        
+        function clearSeeds() {
+            selectedSeeds = [];
+            
+            // Remove all seed markers from scene
+            const markersToRemove = [];
+            scene.traverse((child) => {
+                if (child.userData && child.userData.isSeedMarker) {
+                    markersToRemove.push(child);
+                }
+            });
+            markersToRemove.forEach(marker => {
+                scene.remove(marker);
+                if (marker.geometry) marker.geometry.dispose();
+                if (marker.material) marker.material.dispose();
+            });
+            
+            updateSeedDisplay();
+            showStatus('All seed points cleared', 'info');
+        }
+        
+        async function saveConfiguration() {
+            if (!currentMesh || selectedSeeds.length === 0) {
+                showStatus('No seed points to save', 'error');
+                return;
+            }
+            
+            try {
+                updateDebugInfo(`Saving configuration for ${currentMesh} with ${selectedSeeds.length} seeds`);
+                
+                // Convert seeds to face indices
+                const seedFaceIndices = selectedSeeds.map(seed => seed.face_index);
+                
+                const response = await fetch('/api/save_config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filename: currentMesh,
+                        seed_points: selectedSeeds
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('Configuration saved successfully!', 'success');
+                    updateDebugInfo('Configuration saved successfully');
+                    await loadMeshList(); // Refresh mesh list to show updated status
+                } else {
+                    showStatus('Error saving configuration: ' + data.error, 'error');
+                    updateDebugInfo('Error saving: ' + data.error);
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+                updateDebugInfo('Network error: ' + error.message);
+            }
+        }
+        
+        function selectColor(colorName) {
+            currentSeedColor = colorName;
+            
+            // Update UI
+            document.querySelectorAll('.color-option').forEach(option => {
+                option.classList.remove('active');
+            });
+            document.querySelector(`[data-color="${colorName}"]`).classList.add('active');
+            
+            updateDebugInfo(`Selected color: ${colorName}`);
+        }
+        
+        function initColorSelector() {
+            const container = document.getElementById('colorOptions');
+            const colors = Object.keys(seedColors);
+            
+            colors.forEach((colorName, index) => {
+                const colorRGB = seedColors[colorName];
+                const colorHex = `rgb(${Math.round(colorRGB[0]*255)}, ${Math.round(colorRGB[1]*255)}, ${Math.round(colorRGB[2]*255)})`;
+                
+                const option = document.createElement('div');
+                option.className = 'color-option';
+                if (index === 0) option.classList.add('active'); // First color is default
+                option.setAttribute('data-color', colorName);
+                option.style.backgroundColor = colorHex;
+                option.onclick = () => selectColor(colorName);
+                
+                container.appendChild(option);
+            });
+        }
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            updateDebugInfo('DOM loaded, initializing...');
+            
+            // Initialize color selector
+            initColorSelector();
+            
+            // Wait a bit for Three.js to load
+            setTimeout(() => {
+                if (typeof THREE !== 'undefined') {
+                    updateDebugInfo('Three.js available, version: ' + THREE.REVISION);
+                    initThreeJS();
+                    
+                    // Load mesh list after Three.js is initialized
+                    setTimeout(() => {
+                        loadMeshList();
+                    }, 500);
+                } else {
+                    updateDebugInfo('Three.js not loaded, retrying...');
+                    setTimeout(() => {
+                        if (typeof THREE !== 'undefined') {
+                            initThreeJS();
+                            setTimeout(() => {
+                                loadMeshList();
+                            }, 500);
+                        } else {
+                            updateDebugInfo('Failed to load Three.js');
+                            showStatus('Failed to initialize 3D viewer', 'error');
+                        }
+                    }, 1000);
+                }
+            }, 100);
+        });
+    </script>
+</body>
+</html>

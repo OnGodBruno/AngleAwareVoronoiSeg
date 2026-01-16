@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Mesh Viewer - AAVS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #8b5cf6;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --bg-primary: #0f0f23;
+            --bg-secondary: #1a1a2e;
+            --bg-tertiary: #16213e;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #64748b;
+            --border-color: #334155;
+            --border-hover: #475569;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --shadow-primary: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            overflow: hidden;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #controls {
+            width: 350px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid var(--glass-border);
+            overflow-y: auto;
+            padding: 24px;
+            box-shadow: var(--shadow-glass);
+            z-index: 10;
+        }
+        
+        #viewer {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(ellipse at center, rgba(99, 102, 241, 0.1) 0%, var(--bg-primary) 70%);
+        }
+        
+        .header {
+            margin-bottom: 32px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        
+        .header .subtitle {
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 400;
+        }
+        
+        .control-section {
+            margin-bottom: 28px;
+            padding: 20px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        
+        .control-section:hover {
+            border-color: var(--border-hover);
+        }
+        
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .section-title i {
+            color: var(--primary-color);
+        }
+        
+        .btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-bottom: 8px;
+        }
+        
+        .btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+        }
+        
+        .btn:disabled {
+            background: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn.btn-success {
+            background: var(--success-color);
+        }
+        
+        .btn.btn-success:hover {
+            background: #059669;
+        }
+        
+        .btn.btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+        
+        .btn.btn-secondary:hover {
+            background: var(--border-color);
+        }
+        
+        .mesh-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .mesh-item {
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 2px solid transparent;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .mesh-item.configured {
+            border-color: var(--success-color);
+        }
+        
+        .mesh-info {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .mesh-name {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+        
+        .mesh-status {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        .mesh-badge {
+            background: var(--success-color);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+        
+        .mesh-badge.pending {
+            background: var(--warning-color);
+        }
+        
+        .view-mode-selector {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .view-mode {
+            flex: 1;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 12px;
+        }
+        
+        .view-mode.active {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .mesh-controls {
+            margin-top: 16px;
+        }
+        
+        .mesh-selector {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 16px;
+        }
+        
+        .mesh-toggle {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .mesh-toggle:hover {
+            background: var(--border-color);
+        }
+        
+        .mesh-toggle.active {
+            background: rgba(99, 102, 241, 0.2);
+            border: 1px solid var(--primary-color);
+        }
+        
+        .mesh-toggle input {
+            margin-right: 8px;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: var(--text-muted);
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .status-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            transform: translateY(-100px);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+        
+        .status-indicator.show {
+            transform: translateY(0);
+        }
+        
+        .status-indicator.success {
+            background: var(--success-color);
+        }
+        
+        .status-indicator.error {
+            background: var(--error-color);
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+            font-size: 13px;
+        }
+        
+        .nav-link:hover {
+            background: var(--glass-bg);
+            color: var(--text-primary);
+        }
+        
+        .nav-link.active {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .progress-container {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            display: none;
+        }
+        
+        .progress-container.show {
+            display: block;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-text {
+            text-align: center;
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <div class="header">
+                <h1>Multi-Mesh Viewer</h1>
+                <p class="subtitle">View all segmented meshes</p>
+            </div>
+            
+            <div class="nav-links">
+                <a href="/calibration" class="nav-link">Calibration</a>
+                <a href="/viewer" class="nav-link active">Viewer</a>
+            </div>
+            
+            <div class="control-section">
+                <div class="section-title">
+                    <i class="fas fa-cubes"></i>
+                    Mesh Status
+                </div>
+                <div class="loading" id="meshesLoading">Loading meshes...</div>
+                <div class="mesh-list" id="meshList"></div>
+                <button class="btn" onclick="runSegmentation()" id="segmentBtn">
+                    <i class="fas fa-play"></i> Run Segmentation
+                </button>
+            </div>
+            
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Processing...</div>
+            </div>
+            
+            <div class="control-section" id="viewControls" style="display: none;">
+                <div class="section-title">
+                    <i class="fas fa-eye"></i>
+                    View Controls
+                </div>
+                
+                <div class="view-mode-selector">
+                    <div class="view-mode active" onclick="setViewMode('grid')" id="gridMode">
+                        Grid View
+                    </div>
+                    <div class="view-mode" onclick="setViewMode('single')" id="singleMode">
+                        Single View
+                    </div>
+                </div>
+                
+                <div class="mesh-controls">
+                    <div class="mesh-selector" id="meshSelector"></div>
+                    <button class="btn btn-secondary" onclick="toggleAllMeshes()">
+                        Toggle All
+                    </button>
+                    <button class="btn btn-secondary" onclick="exportResults()">
+                        <i class="fas fa-download"></i> Export All
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="viewer"></div>
+    </div>
+    
+    <div class="status-indicator" id="statusIndicator"></div>
+    
+    <script>
+        let scene, camera, renderer, controls;
+        let meshes = [];
+        let segmentationResults = {};
+        let meshObjects = {};
+        let viewMode = 'grid';
+        let visibleMeshes = new Set();
+        let currentSingleMesh = null;
+        
+        // Colors for different segments
+        const segmentColors = [
+            0xff4444, 0x44ff44, 0x4444ff, 0xffff44, 
+            0xff44ff, 0x44ffff, 0xff8844, 0x88ff44,
+            0x4488ff, 0xff4488, 0x88ff88, 0x8888ff,
+            0xffaa44, 0xaaff44, 0x44aaff, 0xff44aa,
+            0xaaffaa, 0xaaaaff, 0xffffaa, 0xffaaaa
+        ];
+        
+        // Color mapping for calibration colors
+        const seedColorMap = {
+            'red': 0xff3333,
+            'green': 0x33ff33,
+            'blue': 0x3366ff,
+            'yellow': 0xffff33,
+            'magenta': 0xff33ff,
+            'cyan': 0x33ffff,
+            'orange': 0xff9933,
+            'purple': 0x9933ff,
+            'lime': 0x99ff33,
+            'pink': 0xff66cc,
+            'teal': 0x33cccc,
+            'brown': 0xcc6633
+        };
+        
+        async function init() {
+            // Initialize Three.js
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f0f23);
+            
+            camera = new THREE.PerspectiveCamera(75, (window.innerWidth - 350) / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth - 350, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            
+            document.getElementById('viewer').appendChild(renderer.domElement);
+            
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 10, 10);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+            
+            camera.position.set(5, 5, 5);
+            controls.target.set(0, 0, 0);
+            
+            window.addEventListener('resize', onWindowResize);
+            
+            // Load meshes
+            await loadMeshList();
+            
+            animate();
+        }
+        
+        async function loadMeshList() {
+            try {
+                document.getElementById('meshesLoading').classList.add('show');
+                
+                const response = await fetch('/api/meshes');
+                const data = await response.json();
+                
+                if (data.success) {
+                    meshes = data.meshes;
+                    renderMeshList();
+                } else {
+                    showStatus('Error loading meshes: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            } finally {
+                document.getElementById('meshesLoading').classList.remove('show');
+            }
+        }
+        
+        function renderMeshList() {
+            const meshList = document.getElementById('meshList');
+            meshList.innerHTML = '';
+            
+            let configuredCount = 0;
+            
+            meshes.forEach(mesh => {
+                if (mesh.configured) configuredCount++;
+                
+                const item = document.createElement('div');
+                item.className = `mesh-item ${mesh.configured ? 'configured' : ''}`;
+                
+                item.innerHTML = `
+                    <div class="mesh-info">
+                        <div class="mesh-name">${mesh.filename}</div>
+                        <div class="mesh-status">
+                            ${mesh.configured ? `${mesh.seed_count} segments` : 'Not configured'}
+                        </div>
+                    </div>
+                    <div class="mesh-badge ${mesh.configured ? '' : 'pending'}">
+                        ${mesh.configured ? 'Ready' : 'Pending'}
+                    </div>
+                `;
+                
+                meshList.appendChild(item);
+            });
+            
+            // Update segment button
+            const segmentBtn = document.getElementById('segmentBtn');
+            segmentBtn.disabled = configuredCount === 0;
+            
+            if (configuredCount === 0) {
+                segmentBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> No meshes configured';
+            } else {
+                segmentBtn.innerHTML = `<i class="fas fa-play"></i> Segment ${configuredCount} Meshes`;
+            }
+        }
+        
+        async function runSegmentation() {
+            try {
+                document.getElementById('progressContainer').classList.add('show');
+                updateProgress(0, 'Starting segmentation...');
+                
+                const response = await fetch('/api/segment_all', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                updateProgress(50, 'Processing results...');
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    segmentationResults = data.results;
+                    updateProgress(100, 'Complete!');
+                    
+                    setTimeout(() => {
+                        document.getElementById('progressContainer').classList.remove('show');
+                        showSegmentedMeshes();
+                    }, 1000);
+                    
+                    showStatus('Segmentation completed successfully!', 'success');
+                } else {
+                    showStatus('Error during segmentation: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            } finally {
+                document.getElementById('progressContainer').classList.remove('show');
+            }
+        }
+        
+        function updateProgress(percent, text) {
+            document.getElementById('progressFill').style.width = percent + '%';
+            document.getElementById('progressText').textContent = text;
+        }
+        
+        function showSegmentedMeshes() {
+            // Clear existing meshes
+            Object.values(meshObjects).forEach(obj => {
+                if (obj.parent) {
+                    obj.parent.remove(obj);
+                }
+            });
+            meshObjects = {};
+            
+            // Create meshes from segmentation results
+            const filenames = Object.keys(segmentationResults);
+            filenames.forEach((filename, index) => {
+                const result = segmentationResults[filename];
+                createSegmentedMesh(filename, result, index);
+                visibleMeshes.add(filename);
+            });
+            
+            // Show view controls
+            document.getElementById('viewControls').style.display = 'block';
+            renderMeshSelector();
+            
+            // Arrange meshes
+            arrangeMeshes();
+        }
+        
+        function createSegmentedMesh(filename, result, index) {
+            const geometry = new THREE.BufferGeometry();
+            const vertices = new Float32Array(result.vertices.flat());
+            const indices = new Uint32Array(result.faces.flat());
+            
+            geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+            geometry.computeVertexNormals();
+            
+            // Create colors based on face labels using calibration colors
+            const faceLabels = result.face_labels;
+            const seedColors = result.seed_colors || [];
+            const seedFaces = result.seed_faces || [];
+            
+            // Create mapping from seed face index to seed array index
+            const seedIndexMap = {};
+            seedFaces.forEach((faceIdx, seedIdx) => {
+                seedIndexMap[faceIdx] = seedIdx;
+            });
+            
+            const colors = new Float32Array(vertices.length);
+            
+            // Handle both dict and array formats for faceLabels
+            const faceLabelEntries = Array.isArray(faceLabels) ? faceLabels.map((label, i) => [i, label]) : Object.entries(faceLabels);
+            
+            for (const [faceIdx, seedFaceIdx] of faceLabelEntries) {
+                const seedArrayIdx = seedIndexMap[seedFaceIdx];
+                
+                let color;
+                if (seedArrayIdx !== undefined && seedArrayIdx < seedColors.length) {
+                    // Use calibration color
+                    const colorName = seedColors[seedArrayIdx];
+                    color = new THREE.Color(seedColorMap[colorName] || 0xff4444);
+                } else {
+                    // Fallback for unlabeled faces
+                    color = new THREE.Color(0x888888);
+                }
+                
+                const face = result.faces[faceIdx];
+                for (let j = 0; j < 3; j++) {
+                    const vertexIndex = face[j] * 3;
+                    colors[vertexIndex] = color.r;
+                    colors[vertexIndex + 1] = color.g;
+                    colors[vertexIndex + 2] = color.b;
+                }
+            }
+            
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            
+            const material = new THREE.MeshLambertMaterial({
+                vertexColors: true,
+                side: THREE.DoubleSide
+            });
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData = { filename, originalIndex: index };
+            
+            scene.add(mesh);
+            meshObjects[filename] = mesh;
+        }
+        
+        function arrangeMeshes() {
+            const visibleMeshArray = Array.from(visibleMeshes);
+            
+            if (viewMode === 'grid') {
+                // Grid arrangement
+                const cols = Math.ceil(Math.sqrt(visibleMeshArray.length));
+                const spacing = 3;
+                
+                visibleMeshArray.forEach((filename, i) => {
+                    const mesh = meshObjects[filename];
+                    if (mesh) {
+                        const col = i % cols;
+                        const row = Math.floor(i / cols);
+                        
+                        // Center and scale mesh
+                        const box = new THREE.Box3().setFromObject(mesh);
+                        const center = box.getCenter(new THREE.Vector3());
+                        const size = box.getSize(new THREE.Vector3());
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        
+                        mesh.position.set(
+                            (col - (cols - 1) / 2) * spacing,
+                            -(row - (Math.ceil(visibleMeshArray.length / cols) - 1) / 2) * spacing,
+                            0
+                        );
+                        mesh.position.sub(center);
+                        mesh.scale.setScalar(1.5 / maxDim);
+                        mesh.visible = true;
+                    }
+                });
+            } else {
+                // Single view mode
+                visibleMeshArray.forEach(filename => {
+                    const mesh = meshObjects[filename];
+                    if (mesh) {
+                        if (filename === currentSingleMesh || (!currentSingleMesh && filename === visibleMeshArray[0])) {
+                            // Center and scale the active mesh
+                            const box = new THREE.Box3().setFromObject(mesh);
+                            const center = box.getCenter(new THREE.Vector3());
+                            const size = box.getSize(new THREE.Vector3());
+                            const maxDim = Math.max(size.x, size.y, size.z);
+                            
+                            mesh.position.copy(center.multiplyScalar(-1));
+                            mesh.scale.setScalar(2.5 / maxDim);
+                            mesh.visible = true;
+                            currentSingleMesh = filename;
+                        } else {
+                            mesh.visible = false;
+                        }
+                    }
+                });
+            }
+            
+            // Update camera position
+            if (viewMode === 'grid') {
+                camera.position.set(5, 5, 5);
+            } else {
+                camera.position.set(3, 3, 3);
+            }
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+        
+        function renderMeshSelector() {
+            const selector = document.getElementById('meshSelector');
+            selector.innerHTML = '';
+            
+            Object.keys(segmentationResults).forEach(filename => {
+                const item = document.createElement('div');
+                item.className = `mesh-toggle ${visibleMeshes.has(filename) ? 'active' : ''}`;
+                item.onclick = () => toggleMeshVisibility(filename);
+                
+                item.innerHTML = `
+                    <input type="checkbox" ${visibleMeshes.has(filename) ? 'checked' : ''} readonly>
+                    <span>${filename}</span>
+                `;
+                
+                selector.appendChild(item);
+            });
+        }
+        
+        function setViewMode(mode) {
+            viewMode = mode;
+            
+            document.querySelectorAll('.view-mode').forEach(el => el.classList.remove('active'));
+            document.getElementById(mode + 'Mode').classList.add('active');
+            
+            arrangeMeshes();
+        }
+        
+        function toggleMeshVisibility(filename) {
+            if (visibleMeshes.has(filename)) {
+                visibleMeshes.delete(filename);
+            } else {
+                visibleMeshes.add(filename);
+            }
+            
+            renderMeshSelector();
+            arrangeMeshes();
+        }
+        
+        function toggleAllMeshes() {
+            const allVisible = visibleMeshes.size === Object.keys(segmentationResults).length;
+            
+            if (allVisible) {
+                visibleMeshes.clear();
+            } else {
+                visibleMeshes = new Set(Object.keys(segmentationResults));
+            }
+            
+            renderMeshSelector();
+            arrangeMeshes();
+        }
+        
+        async function exportResults() {
+            // For now, just show a message. Individual exports would need to be implemented per mesh
+            showStatus('Export functionality coming soon!', 'error');
+        }
+        
+        function showStatus(message, type) {
+            const indicator = document.getElementById('statusIndicator');
+            indicator.textContent = message;
+            indicator.className = `status-indicator ${type} show`;
+            
+            setTimeout(() => {
+                indicator.classList.remove('show');
+            }, 3000);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            camera.aspect = (window.innerWidth - 350) / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth - 350, window.innerHeight);
+        }
+        
+        // Initialize when page loads
+        window.onload = init;
+    </script>
+</body>
+</html>
